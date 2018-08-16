@@ -255,4 +255,158 @@ public class ApproximateHistogramTopNQueryTest
 
     TestHelper.assertExpectedResults(expectedResults, runner.run(QueryPlus.wrap(query), context));
   }
+
+
+
+  @Test
+  public void testTopNWithFixedHistogramAgg()
+  {
+    FixedBucketsHistogramAggregatorFactory factory = new FixedBucketsHistogramAggregatorFactory(
+        "apphisto",
+        "index",
+        10,
+        0,
+        2000,
+        FixedBucketsHistogram.OutlierHandlingMode.IGNORE
+    );
+
+    TopNQuery query = new TopNQueryBuilder()
+        .dataSource(QueryRunnerTestHelper.dataSource)
+        .granularity(QueryRunnerTestHelper.allGran)
+        .dimension(QueryRunnerTestHelper.marketDimension)
+        .metric(QueryRunnerTestHelper.dependentPostAggMetric)
+        .threshold(4)
+        .intervals(QueryRunnerTestHelper.fullOnInterval)
+        .aggregators(
+            Lists.newArrayList(
+                Iterables.concat(
+                    QueryRunnerTestHelper.commonDoubleAggregators,
+                    Lists.newArrayList(
+                        new DoubleMaxAggregatorFactory("maxIndex", "index"),
+                        new DoubleMinAggregatorFactory("minIndex", "index"),
+                        factory
+                    )
+                )
+            )
+        )
+        .postAggregators(
+            Arrays.asList(
+                QueryRunnerTestHelper.addRowsIndexConstant,
+                QueryRunnerTestHelper.dependentPostAgg,
+                new QuantilePostAggregator("quantile", "apphisto", 0.5f),
+                new MaxPostAggregator("maxx", "apphisto"),
+                new MinPostAggregator("minn", "apphisto")
+            )
+        )
+        .build();
+
+    List<Result<TopNResultValue>> expectedResults = Collections.singletonList(
+        new Result<TopNResultValue>(
+            DateTimes.of("2011-01-12T00:00:00.000Z"),
+            new TopNResultValue(
+                Arrays.<Map<String, Object>>asList(
+                    ImmutableMap.<String, Object>builder()
+                        .put(QueryRunnerTestHelper.marketDimension, "total_market")
+                        .put("rows", 186L)
+                        .put("index", 215679.82879638672D)
+                        .put("addRowsIndexConstant", 215866.82879638672D)
+                        .put(QueryRunnerTestHelper.dependentPostAggMetric, 216053.82879638672D)
+                        .put("uniques", QueryRunnerTestHelper.UNIQUES_2)
+                        .put("maxIndex", 1743.9217529296875D)
+                        .put("minIndex", 792.3260498046875D)
+                        .put("quantile", 1085.6775f)
+                        .put(
+                            "apphisto",
+                            new Histogram(
+                                new float[]{
+                                    554.4271240234375f,
+                                    792.3260498046875f,
+                                    1030.2249755859375f,
+                                    1268.1239013671875f,
+                                    1506.0228271484375f,
+                                    1743.9217529296875f
+                                },
+                                new double[]{
+                                    0.0D,
+                                    39.42073059082031D,
+                                    103.29110717773438D,
+                                    34.93659591674805D,
+                                    8.351564407348633D
+                                }
+                            )
+                        )
+                        .build(),
+                    ImmutableMap.<String, Object>builder()
+                        .put(QueryRunnerTestHelper.marketDimension, "upfront")
+                        .put("rows", 186L)
+                        .put("index", 192046.1060180664D)
+                        .put("addRowsIndexConstant", 192233.1060180664D)
+                        .put(QueryRunnerTestHelper.dependentPostAggMetric, 192420.1060180664D)
+                        .put("uniques", QueryRunnerTestHelper.UNIQUES_2)
+                        .put("maxIndex", 1870.06103515625D)
+                        .put("minIndex", 545.9906005859375D)
+                        .put("quantile", 880.9881f)
+                        .put(
+                            "apphisto",
+                            new Histogram(
+                                new float[]{
+                                    214.97299194335938f,
+                                    545.9906005859375f,
+                                    877.0081787109375f,
+                                    1208.0257568359375f,
+                                    1539.0433349609375f,
+                                    1870.06103515625f
+                                },
+                                new double[]{
+                                    0.0D,
+                                    67.53287506103516D,
+                                    72.22068786621094D,
+                                    31.984678268432617D,
+                                    14.261756896972656D
+                                }
+                            )
+                        )
+                        .build(),
+                    ImmutableMap.<String, Object>builder()
+                        .put(QueryRunnerTestHelper.marketDimension, "spot")
+                        .put("rows", 837L)
+                        .put("index", 95606.57232284546D)
+                        .put("addRowsIndexConstant", 96444.57232284546D)
+                        .put(QueryRunnerTestHelper.dependentPostAggMetric, 97282.57232284546D)
+                        .put("uniques", QueryRunnerTestHelper.UNIQUES_9)
+                        .put("maxIndex", 277.2735290527344D)
+                        .put("minIndex", 59.02102279663086D)
+                        .put("quantile", 101.78856f)
+                        .put(
+                            "apphisto",
+                            new Histogram(
+                                new float[]{
+                                    4.457897186279297f,
+                                    59.02102279663086f,
+                                    113.58415222167969f,
+                                    168.14727783203125f,
+                                    222.7104034423828f,
+                                    277.2735290527344f
+                                },
+                                new double[]{
+                                    0.0D,
+                                    462.4309997558594D,
+                                    357.5404968261719D,
+                                    15.022850036621094D,
+                                    2.0056631565093994D
+                                }
+                            )
+                        )
+                        .build()
+                )
+            )
+        )
+    );
+    HashMap<String, Object> context = new HashMap<String, Object>();
+
+    List<Result<TopNResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
+    System.out.println(results);
+
+    //TestHelper.assertExpectedResults(expectedResults, runner.run(QueryPlus.wrap(query), context));
+  }
 }

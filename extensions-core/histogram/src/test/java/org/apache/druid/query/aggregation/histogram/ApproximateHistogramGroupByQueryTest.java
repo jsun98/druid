@@ -27,6 +27,8 @@ import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.io.Closer;
 import org.apache.druid.query.QueryRunner;
 import org.apache.druid.query.QueryRunnerTestHelper;
+import org.apache.druid.query.aggregation.DoubleMaxAggregatorFactory;
+import org.apache.druid.query.aggregation.DoubleMinAggregatorFactory;
 import org.apache.druid.query.dimension.DefaultDimensionSpec;
 import org.apache.druid.query.groupby.GroupByQuery;
 import org.apache.druid.query.groupby.GroupByQueryConfig;
@@ -43,6 +45,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -212,6 +215,68 @@ public class ApproximateHistogramGroupByQueryTest
     );
 
     Iterable<Row> results = GroupByQueryRunnerTestHelper.runQuery(factory, runner, query);
+    TestHelper.assertExpectedObjects(expectedResults, results, "approx-histo");
+  }
+
+  @Test
+  public void testGroupByWithFixedHistogramAgg()
+  {
+    FixedBucketsHistogramAggregatorFactory aggFactory = new FixedBucketsHistogramAggregatorFactory(
+        "apphisto",
+        "index",
+        10,
+        500f,
+        2000f,
+        FixedBucketsHistogram.OutlierHandlingMode.IGNORE
+    );
+
+    GroupByQuery query = new GroupByQuery.Builder()
+        .setDataSource(QueryRunnerTestHelper.dataSource)
+        .setGranularity(QueryRunnerTestHelper.allGran).setDimensions(new DefaultDimensionSpec(
+            QueryRunnerTestHelper.marketDimension,
+            "marketalias"
+        ))
+        .setInterval(QueryRunnerTestHelper.fullOnInterval)
+        .setLimitSpec(
+            new DefaultLimitSpec(
+                Collections.singletonList(new OrderByColumnSpec("marketalias", OrderByColumnSpec.Direction.DESCENDING)),
+                1
+            )
+        ).setAggregatorSpecs(QueryRunnerTestHelper.rowsCount, aggFactory, new DoubleMaxAggregatorFactory("max", "index"), new DoubleMinAggregatorFactory("min", "index"))
+        .setPostAggregatorSpecs(
+            Arrays.asList(
+                new QuantilePostAggregator("quantile", "apphisto", 0.5f),
+                new MaxPostAggregator("maxx", "apphisto"),
+                new MinPostAggregator("minn", "apphisto")
+            )
+        )
+        .build();
+
+    List<Row> expectedResults = Collections.singletonList(
+        GroupByQueryRunnerTestHelper.createExpectedRow(
+            "1970-01-01T00:00:00.000Z",
+            "marketalias", "upfront",
+            "rows", 186L,
+            "quantile", 880.9881f,
+            "apphisto",
+            new Histogram(
+                new float[]{
+                    214.97299194335938f,
+                    545.9906005859375f,
+                    877.0081787109375f,
+                    1208.0257568359375f,
+                    1539.0433349609375f,
+                    1870.06103515625f
+                },
+                new double[]{
+                    0.0, 67.53287506103516, 72.22068786621094, 31.984678268432617, 14.261756896972656
+                }
+            )
+        )
+    );
+
+    Iterable<Row> results = GroupByQueryRunnerTestHelper.runQuery(factory, runner, query);
+    List<Row> resultsList = (List<Row>) results;
     TestHelper.assertExpectedObjects(expectedResults, results, "approx-histo");
   }
 
