@@ -19,15 +19,20 @@
 
 package org.apache.druid.indexing.kafka;
 
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.druid.indexing.SeekableStream.SeekableStreamIndexTaskClient;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskClient;
 import org.apache.druid.indexing.common.TaskInfoProvider;
 import org.apache.druid.java.util.http.client.HttpClient;
 import org.joda.time.Duration;
 
+import java.util.Map;
+
 //Left here for backward compatibility
 public class KafkaIndexTaskClient extends SeekableStreamIndexTaskClient<Integer, Long>
 {
+  private static ObjectMapper mapper = new ObjectMapper();
+
   public KafkaIndexTaskClient(
       HttpClient httpClient,
       ObjectMapper jsonMapper,
@@ -48,5 +53,12 @@ public class KafkaIndexTaskClient extends SeekableStreamIndexTaskClient<Integer,
         numRetries
     );
   }
+
+  @Override
+  protected JavaType constructMapType(Class<? extends Map> mapType)
+  {
+    return mapper.getTypeFactory().constructMapType(mapType, Integer.class, Long.class);
+  }
+
 
 }
