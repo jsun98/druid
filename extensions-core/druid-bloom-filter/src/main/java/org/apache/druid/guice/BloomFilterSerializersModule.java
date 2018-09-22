@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
+import org.apache.druid.query.aggregation.bloom.BloomFilterAggregatorFactory;
 import org.apache.druid.query.filter.BloomDimFilter;
 import org.apache.druid.query.filter.BloomKFilterHolder;
 import org.apache.hive.common.util.BloomKFilter;
@@ -40,7 +41,10 @@ public class BloomFilterSerializersModule extends SimpleModule
 
   public BloomFilterSerializersModule()
   {
-    registerSubtypes(new NamedType(BloomDimFilter.class, BLOOM_FILTER_TYPE_NAME));
+    registerSubtypes(
+        new NamedType(BloomDimFilter.class, BLOOM_FILTER_TYPE_NAME),
+        new NamedType(BloomFilterAggregatorFactory.class, BLOOM_FILTER_TYPE_NAME)
+    );
     addSerializer(BloomKFilter.class, new BloomKFilterSerializer());
     addDeserializer(BloomKFilter.class, new BloomKFilterDeserializer());
     addDeserializer(BloomKFilterHolder.class, new BloomKFilterHolderDeserializer());
