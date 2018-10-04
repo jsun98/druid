@@ -45,7 +45,6 @@ import org.apache.druid.indexing.kafka.KafkaIOConfig;
 import org.apache.druid.indexing.kafka.KafkaIndexTask;
 import org.apache.druid.indexing.kafka.KafkaIndexTaskClient;
 import org.apache.druid.indexing.kafka.KafkaIndexTaskClientFactory;
-import org.apache.druid.indexing.kafka.KafkaPartitions;
 import org.apache.druid.indexing.kafka.test.TestBroker;
 import org.apache.druid.indexing.overlord.DataSourceMetadata;
 import org.apache.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
@@ -58,6 +57,7 @@ import org.apache.druid.indexing.overlord.TaskStorage;
 import org.apache.druid.indexing.overlord.supervisor.SupervisorReport;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask.Status;
+import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.indexing.seekablestream.supervisor.TaskReportData;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
@@ -517,7 +517,7 @@ public class KafkaSupervisorTest extends EasyMockSupport
     expect(taskStorage.getActiveTasks()).andReturn(ImmutableList.of()).anyTimes();
     expect(indexerMetadataStorageCoordinator.getDataSourceMetadata(DATASOURCE)).andReturn(
         new KafkaDataSourceMetadata(
-            new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L))
+            new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L))
         )
     ).anyTimes();
     expect(taskQueue.add(capture(captured))).andReturn(true);
@@ -545,7 +545,7 @@ public class KafkaSupervisorTest extends EasyMockSupport
     expect(taskStorage.getActiveTasks()).andReturn(ImmutableList.of()).anyTimes();
     expect(indexerMetadataStorageCoordinator.getDataSourceMetadata(DATASOURCE)).andReturn(
         new KafkaDataSourceMetadata(
-            new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L))
+            new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L))
         )
     ).anyTimes();
     replayAll();
@@ -565,8 +565,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         1,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L)),
         null,
         null
     );
@@ -576,8 +576,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, 333L, 1, 333L, 2, 333L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 333L, 1, 333L, 2, 333L)),
         null,
         null
     );
@@ -587,8 +587,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         1,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 1L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, 333L, 1, 333L, 2, 330L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 1L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 333L, 1, 333L, 2, 330L)),
         null,
         null
     );
@@ -598,8 +598,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id4",
         "other-datasource",
         2,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L)),
         null,
         null
     );
@@ -666,8 +666,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -675,8 +675,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         1,
-        new KafkaPartitions("topic", ImmutableMap.of(1, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(1, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(1, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(1, Long.MAX_VALUE)),
         null,
         null
     );
@@ -684,8 +684,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -693,8 +696,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id4",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE)),
         null,
         null
     );
@@ -702,8 +705,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id5",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -850,8 +853,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         now,
         maxi
     );
@@ -1129,8 +1132,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1221,8 +1227,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -1311,8 +1317,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1321,8 +1330,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 1L, 1, 2L, 2, 3L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 1L, 1, 2L, 2, 3L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1659,8 +1671,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1669,8 +1684,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1679,8 +1697,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1785,17 +1806,17 @@ public class KafkaSupervisorTest extends EasyMockSupport
     Capture<String> captureDataSource = EasyMock.newCapture();
     Capture<DataSourceMetadata> captureDataSourceMetadata = EasyMock.newCapture();
 
-    KafkaDataSourceMetadata kafkaDataSourceMetadata = new KafkaDataSourceMetadata(new KafkaPartitions(
+    KafkaDataSourceMetadata kafkaDataSourceMetadata = new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
         topic,
         ImmutableMap.of(0, 1000L, 1, 1000L, 2, 1000L)
     ));
 
-    KafkaDataSourceMetadata resetMetadata = new KafkaDataSourceMetadata(new KafkaPartitions(
+    KafkaDataSourceMetadata resetMetadata = new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
         topic,
         ImmutableMap.of(1, 1000L, 2, 1000L)
     ));
 
-    KafkaDataSourceMetadata expectedMetadata = new KafkaDataSourceMetadata(new KafkaPartitions(
+    KafkaDataSourceMetadata expectedMetadata = new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
         topic,
         ImmutableMap.of(0, 1000L)
     ));
@@ -1837,7 +1858,7 @@ public class KafkaSupervisorTest extends EasyMockSupport
     supervisor.runInternal();
     verifyAll();
 
-    KafkaDataSourceMetadata resetMetadata = new KafkaDataSourceMetadata(new KafkaPartitions(
+    KafkaDataSourceMetadata resetMetadata = new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
         topic,
         ImmutableMap.of(1, 1000L, 2, 1000L)
     ));
@@ -1865,8 +1886,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1875,8 +1899,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1885,8 +1912,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1953,8 +1983,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1963,8 +1996,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -1973,8 +2009,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -2040,8 +2079,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2050,8 +2089,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2060,8 +2099,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2118,8 +2157,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
     supervisor.checkpoint(
         0,
         ((KafkaIndexTask) id1).getIOConfig().getBaseSequenceName(),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, checkpoints.get(0))),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, fakeCheckpoints))
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, checkpoints.get(0))),
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, fakeCheckpoints))
     );
 
     while (supervisor.getNoticesQueueSize() > 0) {
@@ -2142,8 +2181,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2152,8 +2191,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2162,8 +2201,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2188,8 +2227,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
     supervisor.checkpoint(
         0,
         ((KafkaIndexTask) id1).getIOConfig().getBaseSequenceName(),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, Collections.emptyMap())),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, Collections.emptyMap()))
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, Collections.emptyMap())),
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, Collections.emptyMap()))
     );
 
     while (supervisor.getNoticesQueueSize() > 0) {
@@ -2221,8 +2260,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 0L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 0L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2231,8 +2270,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 0L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 0L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2241,8 +2280,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions(topic, ImmutableMap.of(0, 0L)),
-        new KafkaPartitions(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, 0L)),
+        new SeekableStreamPartitions<>(topic, ImmutableMap.of(0, Long.MAX_VALUE)),
         null,
         null
     );
@@ -2287,8 +2326,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
     supervisor.checkpoint(
         null,
         ((KafkaIndexTask) id1).getIOConfig().getBaseSequenceName(),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, checkpoints.get(0))),
-        new KafkaDataSourceMetadata(new KafkaPartitions(topic, newCheckpoints.get(0)))
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, checkpoints.get(0))),
+        new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, newCheckpoints.get(0)))
     );
 
     while (supervisor.getNoticesQueueSize() > 0) {
@@ -2341,8 +2380,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id1",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 0L, 1, 0L, 2, 0L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -2351,8 +2393,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id2",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -2361,8 +2406,11 @@ public class KafkaSupervisorTest extends EasyMockSupport
         "id3",
         DATASOURCE,
         0,
-        new KafkaPartitions("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
-        new KafkaPartitions("topic", ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)),
+        new SeekableStreamPartitions<>("topic", ImmutableMap.of(0, 10L, 1, 20L, 2, 30L)),
+        new SeekableStreamPartitions<>(
+            "topic",
+            ImmutableMap.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE, 2, Long.MAX_VALUE)
+        ),
         null,
         null
     );
@@ -2689,8 +2737,8 @@ public class KafkaSupervisorTest extends EasyMockSupport
       String id,
       String dataSource,
       int taskGroupId,
-      KafkaPartitions startPartitions,
-      KafkaPartitions endPartitions,
+      SeekableStreamPartitions<Integer, Long> startPartitions,
+      SeekableStreamPartitions<Integer, Long> endPartitions,
       DateTime minimumMessageTime,
       DateTime maximumMessageTime
   )
