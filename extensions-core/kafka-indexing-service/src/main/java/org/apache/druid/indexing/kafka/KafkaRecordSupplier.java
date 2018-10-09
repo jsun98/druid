@@ -19,11 +19,10 @@
 
 package org.apache.druid.indexing.kafka;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import org.apache.druid.indexing.kafka.supervisor.KafkaSupervisorIOConfig;
+import org.apache.druid.indexing.seekablestream.SeekableStreamRecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
-import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -41,46 +40,124 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
+public class KafkaRecordSupplier extends SeekableStreamRecordSupplier<Integer, Long>
 {
   private static final EmittingLogger log = new EmittingLogger(KafkaRecordSupplier.class);
   private static final Random RANDOM = ThreadLocalRandom.current();
 
-  private final KafkaConsumer<byte[], byte[]> consumer;
-  private final KafkaSupervisorIOConfig ioConfig;
-  private boolean closed;
-  private final BlockingQueue<OrderedPartitionableRecord<Integer, Long>> records;
+
+  private final Map<String, String> consumerProperties;
+  private final long pollTimeoutMillis;
+  private final Map<String, KafkaConsumer<byte[], byte[]>> kafkaConsumerMap = new ConcurrentHashMap<>();
+
+  private class KafkaPartitionResource extends SeekableStreamRecordSupplier<Integer, Long>.SeekablePartitionResource
+  {
+
+    private final KafkaConsumer<byte[], byte[]> consumer;
+
+    KafkaPartitionResource(StreamPartition<Integer> streamPartition, KafkaConsumer<byte[], byte[]> consumer)
+    {
+      super(streamPartition);
+      consumer.assign(Collections.singletonList(new TopicPartition(
+          streamPartition.getStream(),
+          streamPartition.getPartitionId()
+      )));
+      this.consumer = consumer;
+    }
+
+    @Override
+    protected void fetchRecords() throws InterruptedException
+    {
+
+      ConsumerRecords<byte[], byte[]> polledRecords = consumer.poll(pollTimeoutMillis);
+
+      for (ConsumerRecord<byte[], byte[]> kafkaRecord : polledRecords) {
+
+        OrderedPartitionableRecord<Integer, Long> record = new OrderedPartitionableRecord<>(
+            kafkaRecord.topic(),
+            kafkaRecord.partition(),
+            kafkaRecord.offset(),
+            ImmutableList.of(kafkaRecord.value())
+        );
+
+        if (log.isTraceEnabled()) {
+          log.trace(
+              "Stream[%s] / partition[%s] / sequenceNum[%s] / bufferRemainingCapacity[%d]: %s",
+              record.getStream(),
+              record.getPartitionId(),
+              record.getSequenceNumber(),
+              records.remainingCapacity(),
+              record.getData().stream().map(String::new).collect(Collectors.toList())
+          );
+        }
+
+        // If the buffer was full and we weren't able to add the message, grab a new stream iterator starting
+        // from this message and back off for a bit to let the buffer drain before retrying.
+        if (!records.offer(record, recordBufferOfferTimeout, TimeUnit.MILLISECONDS)) {
+          log.warn(
+              "OrderedPartitionableRecord buffer full, storing iterator and retrying in [%,dms]",
+              recordBufferFullWait
+          );
+
+          consumer.seek(new TopicPartition(kafkaRecord.topic(), kafkaRecord.partition()), kafkaRecord.offset());
+
+          rescheduleRunnable(recordBufferFullWait);
+          return;
+        }
+
+      }
+    }
+  }
 
 
   public KafkaRecordSupplier(
-      KafkaSupervisorIOConfig ioConfig
+      Map<String, String> consumerProperties,
+      int fetchDelayMillis,
+      int fetchThreads,
+      int recordBufferSize,
+      int recordBufferOfferTimeout,
+      int recordBufferFullWait,
+      long pollTimeoutMillis
   )
   {
-    this.ioConfig = ioConfig;
-    this.consumer = getKafkaConsumer();
-    this.closed = false;
-    this.records = new LinkedBlockingQueue<>();
-  }
-
-  @Override
-  public void assign(Set<StreamPartition<Integer>> streamPartitions)
-  {
-    consumer.assign(streamPartitions
-                        .stream()
-                        .map(x -> new TopicPartition(x.getStream(), x.getPartitionId()))
-                        .collect(Collectors.toSet()));
+    super(
+        fetchDelayMillis,
+        fetchThreads,
+        recordBufferSize,
+        recordBufferOfferTimeout,
+        recordBufferFullWait
+    );
+    this.consumerProperties = consumerProperties;
+    this.pollTimeoutMillis = pollTimeoutMillis;
   }
 
   @Override
   public void seek(StreamPartition<Integer> partition, Long sequenceNumber)
   {
-    consumer.seek(new TopicPartition(partition.getStream(), partition.getPartitionId()), sequenceNumber);
+    checkIfClosed();
+
+    Preconditions.checkArgument(sequenceNumber != null);
+
+    KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+    if (resource == null) {
+      throw new ISE("Partition [%s] has not been assigned", partition);
+    }
+
+
+    log.debug(
+        "Seeking partition [%s] to [%s]",
+        partition.getPartitionId(),
+        sequenceNumber
+    );
+
+    resource.consumer.seek(new TopicPartition(partition.getStream(), partition.getPartitionId()), sequenceNumber);
+
+    checkPartitionsStarted = true;
   }
 
   @Override
@@ -92,95 +169,120 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
   @Override
   public void seekToEarliest(Set<StreamPartition<Integer>> partitions)
   {
-    consumer.seekToBeginning(partitions
-                                 .stream()
-                                 .map(e -> new TopicPartition(e.getStream(), e.getPartitionId()))
-                                 .collect(Collectors.toList()));
+    checkIfClosed();
+    partitions.forEach(partition -> {
+      KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+      if (resource == null) {
+        throw new ISE("Partition [%s] has not been assigned", partition);
+      }
+
+      resource.consumer.seekToBeginning(Collections.singletonList(new TopicPartition(
+          partition.getStream(),
+          partition.getPartitionId()
+      )));
+
+    });
   }
 
   @Override
   public void seekToLatest(Set<StreamPartition<Integer>> partitions)
   {
-    consumer.seekToEnd(partitions
-                           .stream()
-                           .map(e -> new TopicPartition(e.getStream(), e.getPartitionId()))
-                           .collect(Collectors.toList()));
-  }
-
-  @Override
-  public Set<StreamPartition<Integer>> getAssignment()
-  {
-    Set<TopicPartition> topicPartitions = consumer.assignment();
-    return topicPartitions
-        .stream()
-        .map((TopicPartition e) -> new StreamPartition<>(e.topic(), e.partition()))
-        .collect(Collectors.toSet());
-  }
-
-  @Override
-  public OrderedPartitionableRecord<Integer, Long> poll(long timeout)
-  {
-    if (records.isEmpty()) {
-      ConsumerRecords<byte[], byte[]> polledRecords = consumer.poll(timeout);
-      for (ConsumerRecord<byte[], byte[]> record : polledRecords) {
-        records.offer(new OrderedPartitionableRecord<>(
-            record.topic(),
-            record.partition(),
-            record.offset(),
-            ImmutableList.of(record.value())
-        ));
+    checkIfClosed();
+    partitions.forEach(partition -> {
+      KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+      if (resource == null) {
+        throw new ISE("Partition [%s] has not been assigned", partition);
       }
-    }
 
-    try {
-      return records.poll(timeout, TimeUnit.MILLISECONDS);
-    }
-    catch (InterruptedException e) {
-      log.warn(e, "InterruptedException");
-      return null;
-    }
+      resource.consumer.seekToEnd(Collections.singletonList(new TopicPartition(
+          partition.getStream(),
+          partition.getPartitionId()
+      )));
+
+    });
   }
+
 
   @Override
   public Long getLatestSequenceNumber(StreamPartition<Integer> partition)
   {
+    checkIfClosed();
+
+    KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+    if (resource == null) {
+      throw new ISE("Partition [%s] has not been assigned", partition);
+    }
+
+    TopicPartition topicPartition = new TopicPartition(
+        partition.getStream(),
+        partition.getPartitionId()
+    );
+
     seekToLatest(Collections.singleton(partition));
-    return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    return resource.consumer.endOffsets(Collections.singletonList(topicPartition)).get(topicPartition);
   }
 
   @Override
   public Long getEarliestSequenceNumber(StreamPartition<Integer> partition)
   {
-    seekToEarliest(Collections.singleton(partition));
-    return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    checkIfClosed();
+
+    KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+    if (resource == null) {
+      throw new ISE("Partition [%s] has not been assigned", partition);
+    }
+
+    TopicPartition topicPartition = new TopicPartition(
+        partition.getStream(),
+        partition.getPartitionId()
+    );
+
+    seekToLatest(Collections.singleton(partition));
+    return resource.consumer.beginningOffsets(Collections.singletonList(topicPartition)).get(topicPartition);
   }
 
   @Override
   public Long position(StreamPartition<Integer> partition)
   {
-    return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    checkIfClosed();
+
+    KafkaPartitionResource resource = (KafkaPartitionResource) partitionResources.get(partition);
+    if (resource == null) {
+      throw new ISE("Partition [%s] has not been assigned", partition);
+    }
+
+    return resource.consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
   }
 
   @Override
-  public Set<Integer> getPartitionIds(String stream)
+  public Set<Integer> getPartitionIds(String topic)
   {
-    final Map<String, List<PartitionInfo>> topics = consumer.listTopics();
-    if (!topics.containsKey(stream)) {
-      throw new ISE("Topic [%s] is not found in KafkaConsumer's list of topics", stream);
+    checkIfClosed();
+    final Map<String, List<PartitionInfo>> topics = getKafkaConsumer(topic).listTopics();
+    if (topics == null || !topics.containsKey(topic)) {
+      throw new ISE("Topic [%s] is not found in KafkaConsumer's list of topics", topic);
     }
-    return topics == null
-           ? ImmutableSet.of()
-           : topics.get(stream).stream().map(PartitionInfo::partition).collect(Collectors.toSet());
+    return topics.get(topic).stream().map(PartitionInfo::partition).collect(Collectors.toSet());
   }
 
   @Override
-  public void close()
+  protected SeekablePartitionResource createPartitionResource(
+      StreamPartition<Integer> streamPartition
+  )
   {
-    if (closed) {
-      return;
+    return new KafkaPartitionResource(
+        streamPartition,
+        getKafkaConsumer()
+    );
+  }
+
+  private KafkaConsumer<byte[], byte[]> getKafkaConsumer(String topic)
+  {
+    if (!kafkaConsumerMap.containsKey(topic)) {
+      kafkaConsumerMap.put(topic, getKafkaConsumer(topic));
     }
-    closed = true;
-    consumer.close();
+
+    return kafkaConsumerMap.get(topic);
   }
 
   private KafkaConsumer<byte[], byte[]> getKafkaConsumer()
@@ -190,7 +292,7 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
     props.setProperty("metadata.max.age.ms", "10000");
     props.setProperty("group.id", StringUtils.format("kafka-supervisor-%s", getRandomId()));
 
-    props.putAll(ioConfig.getConsumerProperties());
+    props.putAll(consumerProperties);
 
     props.setProperty("enable.auto.commit", "false");
 

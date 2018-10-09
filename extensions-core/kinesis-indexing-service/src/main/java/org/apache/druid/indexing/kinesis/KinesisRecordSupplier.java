@@ -39,218 +39,139 @@ import com.amazonaws.util.AwsHostNameUtils;
 import com.google.common.collect.ImmutableSet;
 import org.apache.druid.common.aws.AWSCredentialsUtils;
 import org.apache.druid.indexing.kinesis.aws.ConstructibleAWSCredentialsConfig;
+import org.apache.druid.indexing.seekablestream.SeekableStreamRecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
-import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.common.ISE;
-import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 
-import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-public class KinesisRecordSupplier implements RecordSupplier<String, String>
+public class KinesisRecordSupplier extends SeekableStreamRecordSupplier<String, String>
 {
   private static final EmittingLogger log = new EmittingLogger(KinesisRecordSupplier.class);
   private static final long PROVISIONED_THROUGHPUT_EXCEEDED_BACKOFF_MS = 3000;
-  private static final long EXCEPTION_RETRY_DELAY_MS = 10000;
 
-  private class PartitionResource
+  private final int recordsPerFetch;
+  private final boolean deaggregate;
+
+  private class KinesisPartitionResource extends SeekableStreamRecordSupplier<String, String>.SeekablePartitionResource
   {
-    private final StreamPartition<String> streamPartition;
     private final IKinesisProxy kinesisProxy;
-    private final ScheduledExecutorService scheduledExec;
-    private final Object startLock = new Object();
-
     private volatile String shardIterator;
-    private volatile boolean started;
-    private volatile boolean stopRequested;
 
-    public PartitionResource(
+    KinesisPartitionResource(
         StreamPartition<String> streamPartition,
-        IKinesisProxy kinesisProxy,
-        ScheduledExecutorService scheduledExec
+        IKinesisProxy kinesisProxy
     )
     {
-      this.streamPartition = streamPartition;
+      super(streamPartition);
       this.kinesisProxy = kinesisProxy;
-      this.scheduledExec = scheduledExec;
     }
 
-    public void start()
+    @Override
+    protected void fetchRecords() throws InterruptedException
     {
-      synchronized (startLock) {
-        if (started) {
+      try {
+
+        if (shardIterator == null) {
+          log.info("shardIterator[%s] has been closed and has no more records", streamPartition.getPartitionId());
+
+          // add an end-of-shard marker so caller knows this shard is closed
+          OrderedPartitionableRecord<String, String> endOfShardRecord = new OrderedPartitionableRecord<>(
+              streamPartition.getStream(),
+              streamPartition.getPartitionId(),
+              OrderedPartitionableRecord.END_OF_SHARD_MARKER,
+              null
+          );
+
+          if (!records.offer(endOfShardRecord, recordBufferOfferTimeout, TimeUnit.MILLISECONDS)) {
+            log.warn("OrderedPartitionableRecord buffer full, retrying in [%,dms]", recordBufferFullWait);
+            rescheduleRunnable(recordBufferFullWait);
+          }
+
           return;
         }
 
-        log.info(
-            "Starting scheduled fetch runnable for stream[%s] partition[%s]",
-            streamPartition.getStream(),
-            streamPartition.getPartitionId()
-        );
+        GetRecordsResult recordsResult = kinesisProxy.get(shardIterator, recordsPerFetch);
 
-        stopRequested = false;
-        started = true;
+        // list will come back empty if there are no records
+        for (Record kinesisRecord : recordsResult.getRecords()) {
+          final List<byte[]> data;
+
+          if (deaggregate) {
+            data = new ArrayList<>();
+
+            final List<UserRecord> userRecords = UserRecord.deaggregate(Collections.singletonList(kinesisRecord));
+            for (UserRecord userRecord : userRecords) {
+              data.add(toByteArray(userRecord.getData()));
+            }
+          } else {
+            data = Collections.singletonList(toByteArray(kinesisRecord.getData()));
+          }
+
+          final OrderedPartitionableRecord<String, String> record = new OrderedPartitionableRecord<>(
+              streamPartition.getStream(),
+              streamPartition.getPartitionId(),
+              kinesisRecord.getSequenceNumber(),
+              data
+          );
+
+
+          if (log.isTraceEnabled()) {
+            log.trace(
+                "Stream[%s] / partition[%s] / sequenceNum[%s] / bufferRemainingCapacity[%d]: %s",
+                record.getStream(),
+                record.getPartitionId(),
+                record.getSequenceNumber(),
+                records.remainingCapacity(),
+                record.getData().stream().map(String::new).collect(Collectors.toList())
+            );
+          }
+
+          // If the buffer was full and we weren't able to add the message, grab a new stream iterator starting
+          // from this message and back off for a bit to let the buffer drain before retrying.
+          if (!records.offer(record, recordBufferOfferTimeout, TimeUnit.MILLISECONDS)) {
+            log.warn(
+                "OrderedPartitionableRecord buffer full, storing iterator and retrying in [%,dms]",
+                recordBufferFullWait
+            );
+
+            shardIterator = kinesisProxy.getIterator(
+                record.getPartitionId(), ShardIteratorType.AT_SEQUENCE_NUMBER.toString(), record.getSequenceNumber()
+            );
+
+            rescheduleRunnable(recordBufferFullWait);
+            return;
+          }
+        }
+
+        shardIterator = recordsResult.getNextShardIterator(); // will be null if the shard has been closed
 
         rescheduleRunnable(fetchDelayMillis);
       }
-    }
-
-    public void stop()
-    {
-      log.info(
-          "Stopping scheduled fetch runnable for stream[%s] partition[%s]",
-          streamPartition.getStream(),
-          streamPartition.getPartitionId()
-      );
-
-      stopRequested = true;
-    }
-
-    private Runnable getRecordRunnable()
-    {
-      return () -> {
-        if (stopRequested) {
-          started = false;
-          stopRequested = false;
-
-          log.info("Worker for partition[%s] has been stopped", streamPartition.getPartitionId());
-          return;
-        }
-
-        try {
-
-          if (shardIterator == null) {
-            log.info("shardIterator[%s] has been closed and has no more records", streamPartition.getPartitionId());
-
-            // add an end-of-shard marker so caller knows this shard is closed
-            OrderedPartitionableRecord<String, String> endOfShardRecord = new OrderedPartitionableRecord<>(
-                streamPartition.getStream(),
-                streamPartition.getPartitionId(),
-                OrderedPartitionableRecord.END_OF_SHARD_MARKER,
-                null
-            );
-
-            if (!records.offer(endOfShardRecord, recordBufferOfferTimeout, TimeUnit.MILLISECONDS)) {
-              log.warn("OrderedPartitionableRecord buffer full, retrying in [%,dms]", recordBufferFullWait);
-              rescheduleRunnable(recordBufferFullWait);
-            }
-
-            return;
-          }
-
-          GetRecordsResult recordsResult = kinesisProxy.get(shardIterator, recordsPerFetch);
-
-          // list will come back empty if there are no records
-          for (Record kinesisRecord : recordsResult.getRecords()) {
-            final List<byte[]> data;
-
-            if (deaggregate) {
-              data = new ArrayList<>();
-
-              final List<UserRecord> userRecords = UserRecord.deaggregate(Collections.singletonList(kinesisRecord));
-              for (UserRecord userRecord : userRecords) {
-                data.add(toByteArray(userRecord.getData()));
-              }
-            } else {
-              data = Collections.singletonList(toByteArray(kinesisRecord.getData()));
-            }
-
-            final OrderedPartitionableRecord<String, String> record = new OrderedPartitionableRecord<>(
-                streamPartition.getStream(),
-                streamPartition.getPartitionId(),
-                kinesisRecord.getSequenceNumber(),
-                data
-            );
-
-
-            if (log.isTraceEnabled()) {
-              log.trace(
-                  "Stream[%s] / partition[%s] / sequenceNum[%s] / bufferRemainingCapacity[%d]: %s",
-                  record.getStream(),
-                  record.getPartitionId(),
-                  record.getSequenceNumber(),
-                  records.remainingCapacity(),
-                  record.getData().stream().map(String::new).collect(Collectors.toList())
-              );
-            }
-
-            // If the buffer was full and we weren't able to add the message, grab a new stream iterator starting
-            // from this message and back off for a bit to let the buffer drain before retrying.
-            if (!records.offer(record, recordBufferOfferTimeout, TimeUnit.MILLISECONDS)) {
-              log.warn(
-                  "OrderedPartitionableRecord buffer full, storing iterator and retrying in [%,dms]",
-                  recordBufferFullWait
-              );
-
-              shardIterator = kinesisProxy.getIterator(
-                  record.getPartitionId(), ShardIteratorType.AT_SEQUENCE_NUMBER.toString(), record.getSequenceNumber()
-              );
-
-              rescheduleRunnable(recordBufferFullWait);
-              return;
-            }
-          }
-
-          shardIterator = recordsResult.getNextShardIterator(); // will be null if the shard has been closed
-
-          rescheduleRunnable(fetchDelayMillis);
-        }
-        catch (ProvisionedThroughputExceededException e) {
-          long retryMs = Math.max(PROVISIONED_THROUGHPUT_EXCEEDED_BACKOFF_MS, fetchDelayMillis);
-          log.warn("Exceeded provisioned throughput, retrying in [%,dms]", retryMs);
-          rescheduleRunnable(retryMs);
-        }
-        catch (Throwable e) {
-          log.error(e, "getRecordRunnable exception, retrying in [%,dms]", EXCEPTION_RETRY_DELAY_MS);
-          rescheduleRunnable(EXCEPTION_RETRY_DELAY_MS);
-        }
-      };
-    }
-
-    private void rescheduleRunnable(long delayMillis)
-    {
-      if (started && !stopRequested) {
-        scheduledExec.schedule(getRecordRunnable(), delayMillis, TimeUnit.MILLISECONDS);
-      } else {
-        log.info("Worker for partition[%s] has been stopped", streamPartition.getPartitionId());
+      catch (ProvisionedThroughputExceededException e) {
+        long retryMs = Math.max(PROVISIONED_THROUGHPUT_EXCEEDED_BACKOFF_MS, fetchDelayMillis);
+        log.warn("Exceeded provisioned throughput, retrying in [%,dms]", retryMs);
+        rescheduleRunnable(retryMs);
       }
     }
   }
 
-  private final int recordsPerFetch;
-  private final int fetchDelayMillis;
-  private final boolean deaggregate;
-  private final int recordBufferOfferTimeout;
-  private final int recordBufferFullWait;
+  private final IKinesisProxyFactory kinesisProxyFactory;
+  private final Map<String, IKinesisProxy> kinesisProxies = new ConcurrentHashMap<>();
   private final int fetchSequenceNumberTimeout;
 
-  private final IKinesisProxyFactory kinesisProxyFactory;
-  private final ScheduledExecutorService scheduledExec;
-
-  private final Map<String, IKinesisProxy> kinesisProxies = new ConcurrentHashMap<>();
-  private final Map<StreamPartition<String>, PartitionResource> partitionResources = new ConcurrentHashMap<>();
-  private final BlockingQueue<OrderedPartitionableRecord<String, String>> records;
-
-  private volatile boolean checkPartitionsStarted = false;
-  private volatile boolean closed = false;
 
   public KinesisRecordSupplier(
       String endpoint,
@@ -268,11 +189,16 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
       int fetchSequenceNumberTimeout
   )
   {
+    super(
+        fetchDelayMillis,
+        fetchThreads,
+        recordBufferSize,
+        recordBufferOfferTimeout,
+        recordBufferFullWait
+    );
+
     this.recordsPerFetch = recordsPerFetch;
-    this.fetchDelayMillis = fetchDelayMillis;
     this.deaggregate = deaggregate;
-    this.recordBufferOfferTimeout = recordBufferOfferTimeout;
-    this.recordBufferFullWait = recordBufferFullWait;
     this.fetchSequenceNumberTimeout = fetchSequenceNumberTimeout;
 
     AWSCredentialsProvider awsCredentialsProvider = AWSCredentialsUtils.defaultAWSCredentialsProviderChain(
@@ -304,40 +230,8 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
                                                             .build();
 
     kinesisProxyFactory = new KinesisProxyFactory(awsCredentialsProvider, kinesisClient);
-    records = new LinkedBlockingQueue<>(recordBufferSize);
-
-    log.info(
-        "Creating fetch thread pool of size [%d] (Runtime.availableProcessors=%d)",
-        fetchThreads,
-        Runtime.getRuntime().availableProcessors()
-    );
-
-    scheduledExec = Executors.newScheduledThreadPool(
-        fetchThreads, Execs.makeThreadFactory("KinesisRecordSupplier-Worker-%d")
-    );
   }
 
-  @Override
-  public void assign(Set<StreamPartition<String>> collection)
-  {
-    checkIfClosed();
-
-    collection.forEach(
-        streamPartition -> partitionResources.putIfAbsent(
-            streamPartition,
-            new PartitionResource(streamPartition, getKinesisProxy(streamPartition.getStream()), scheduledExec)
-        )
-    );
-
-    for (Iterator<Map.Entry<StreamPartition<String>, PartitionResource>> i = partitionResources.entrySet()
-                                                                                               .iterator(); i.hasNext(); ) {
-      Map.Entry<StreamPartition<String>, PartitionResource> entry = i.next();
-      if (!collection.contains(entry.getKey())) {
-        i.remove();
-        entry.getValue().stop();
-      }
-    }
-  }
 
   @Override
   public void seek(StreamPartition<String> partition, String sequenceNumber)
@@ -369,43 +263,6 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
   }
 
   @Override
-  public Collection<StreamPartition<String>> getAssignment()
-  {
-    return partitionResources.keySet();
-  }
-
-  @Nullable
-  @Override
-  public OrderedPartitionableRecord<String, String> poll(long timeout)
-  {
-    checkIfClosed();
-    if (checkPartitionsStarted) {
-      partitionResources.values().forEach(PartitionResource::start);
-      checkPartitionsStarted = false;
-    }
-
-    try {
-      while (true) {
-        OrderedPartitionableRecord<String, String> record = records.poll(timeout, TimeUnit.MILLISECONDS);
-        if (record == null || partitionResources.containsKey(record.getStreamPartition())) {
-          return record;
-        } else if (log.isTraceEnabled()) {
-          log.trace(
-              "Skipping stream[%s] / partition[%s] / sequenceNum[%s] because it is not in current assignment",
-              record.getStream(),
-              record.getPartitionId(),
-              record.getSequenceNumber()
-          );
-        }
-      }
-    }
-    catch (InterruptedException e) {
-      log.warn(e, "InterruptedException");
-      return null;
-    }
-  }
-
-  @Override
   public String getLatestSequenceNumber(StreamPartition<String> partition) throws TimeoutException
   {
     checkIfClosed();
@@ -434,29 +291,6 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
     return shardList != null ? shardList : ImmutableSet.of();
   }
 
-  @Override
-  public void close()
-  {
-    if (this.closed) {
-      return;
-    }
-
-    assign(ImmutableSet.of());
-
-    scheduledExec.shutdown();
-
-    try {
-      if (!scheduledExec.awaitTermination(EXCEPTION_RETRY_DELAY_MS, TimeUnit.MILLISECONDS)) {
-        scheduledExec.shutdownNow();
-      }
-    }
-    catch (InterruptedException e) {
-      log.info(e, "InterruptedException while shutting down");
-    }
-
-    this.closed = true;
-  }
-
   private IKinesisProxy getKinesisProxy(String streamName)
   {
     if (!kinesisProxies.containsKey(streamName)) {
@@ -468,7 +302,7 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
 
   private void seekInternal(StreamPartition<String> partition, String sequenceNumber, ShardIteratorType iteratorEnum)
   {
-    PartitionResource resource = partitionResources.get(partition);
+    KinesisPartitionResource resource = (KinesisPartitionResource) partitionResources.get(partition);
     if (resource == null) {
       throw new ISE("Partition [%s] has not been assigned", partition);
     }
@@ -546,12 +380,14 @@ public class KinesisRecordSupplier implements RecordSupplier<String, String>
     );
   }
 
-  private void checkIfClosed()
+  @Override
+  protected SeekablePartitionResource createPartitionResource(
+      StreamPartition<String> streamPartition
+  )
   {
-    if (closed) {
-      throw new ISE("Invalid operation - KinesisRecordSupplier has already been closed");
-    }
+    return new KinesisPartitionResource(streamPartition, getKinesisProxy(streamPartition.getStream()));
   }
+
 
   /**
    * Returns an array with the content between the position and limit of "buffer". This may be the buffer's backing
