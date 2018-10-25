@@ -21,36 +21,29 @@ package org.apache.druid.indexing.kafka;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-import org.apache.druid.segment.indexing.IOConfig;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIOConfig;
+import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
 import java.util.Map;
+import java.util.Set;
 
-public class KafkaIOConfig implements IOConfig
+public class KafkaIOConfig extends SeekableStreamIOConfig<Integer, Long>
 {
-  private static final boolean DEFAULT_USE_TRANSACTION = true;
   private static final boolean DEFAULT_SKIP_OFFSET_GAPS = false;
 
   @Nullable
-  private final Integer taskGroupId;
-  private final String baseSequenceName;
-  private final KafkaPartitions startPartitions;
-  private final KafkaPartitions endPartitions;
   private final Map<String, Object> consumerProperties;
-  private final boolean useTransaction;
-  private final Optional<DateTime> minimumMessageTime;
-  private final Optional<DateTime> maximumMessageTime;
   private final boolean skipOffsetGaps;
 
   @JsonCreator
   public KafkaIOConfig(
       @JsonProperty("taskGroupId") @Nullable Integer taskGroupId, // can be null for backward compabitility
       @JsonProperty("baseSequenceName") String baseSequenceName,
-      @JsonProperty("startPartitions") KafkaPartitions startPartitions,
-      @JsonProperty("endPartitions") KafkaPartitions endPartitions,
+      @JsonProperty("startPartitions") SeekableStreamPartitions<Integer, Long> startPartitions,
+      @JsonProperty("endPartitions") SeekableStreamPartitions<Integer, Long> endPartitions,
       @JsonProperty("consumerProperties") Map<String, Object> consumerProperties,
       @JsonProperty("useTransaction") Boolean useTransaction,
       @JsonProperty("minimumMessageTime") DateTime minimumMessageTime,
@@ -58,84 +51,44 @@ public class KafkaIOConfig implements IOConfig
       @JsonProperty("skipOffsetGaps") Boolean skipOffsetGaps
   )
   {
-    this.taskGroupId = taskGroupId;
-    this.baseSequenceName = Preconditions.checkNotNull(baseSequenceName, "baseSequenceName");
-    this.startPartitions = Preconditions.checkNotNull(startPartitions, "startPartitions");
-    this.endPartitions = Preconditions.checkNotNull(endPartitions, "endPartitions");
+    super(
+        taskGroupId,
+        baseSequenceName,
+        startPartitions,
+        endPartitions,
+        useTransaction,
+        minimumMessageTime,
+        maximumMessageTime
+    );
+
     this.consumerProperties = Preconditions.checkNotNull(consumerProperties, "consumerProperties");
-    this.useTransaction = useTransaction != null ? useTransaction : DEFAULT_USE_TRANSACTION;
-    this.minimumMessageTime = Optional.fromNullable(minimumMessageTime);
-    this.maximumMessageTime = Optional.fromNullable(maximumMessageTime);
     this.skipOffsetGaps = skipOffsetGaps != null ? skipOffsetGaps : DEFAULT_SKIP_OFFSET_GAPS;
 
-    Preconditions.checkArgument(
-        startPartitions.getTopic().equals(endPartitions.getTopic()),
-        "start topic and end topic must match"
-    );
-
-    Preconditions.checkArgument(
-        startPartitions.getPartitionOffsetMap().keySet().equals(endPartitions.getPartitionOffsetMap().keySet()),
-        "start partition set and end partition set must match"
-    );
-
-    for (int partition : endPartitions.getPartitionOffsetMap().keySet()) {
+    for (int partition : endPartitions.getMap().keySet()) {
       Preconditions.checkArgument(
-          endPartitions.getPartitionOffsetMap().get(partition) >= startPartitions.getPartitionOffsetMap()
-                                                                                 .get(partition),
+          endPartitions.getMap()
+                       .get(partition)
+                       .compareTo(startPartitions.getMap().get(partition)) >= 0,
           "end offset must be >= start offset for partition[%s]",
           partition
       );
     }
   }
 
+  @Override
+  public Set<Integer> getExclusiveStartSequenceNumberPartitions()
+  {
+    return null;
+  }
+
+
   @Nullable
-  @JsonProperty
-  public Integer getTaskGroupId()
-  {
-    return taskGroupId;
-  }
-
-  @JsonProperty
-  public String getBaseSequenceName()
-  {
-    return baseSequenceName;
-  }
-
-  @JsonProperty
-  public KafkaPartitions getStartPartitions()
-  {
-    return startPartitions;
-  }
-
-  @JsonProperty
-  public KafkaPartitions getEndPartitions()
-  {
-    return endPartitions;
-  }
-
   @JsonProperty
   public Map<String, Object> getConsumerProperties()
   {
     return consumerProperties;
   }
 
-  @JsonProperty
-  public boolean isUseTransaction()
-  {
-    return useTransaction;
-  }
-
-  @JsonProperty
-  public Optional<DateTime> getMaximumMessageTime()
-  {
-    return maximumMessageTime;
-  }
-
-  @JsonProperty
-  public Optional<DateTime> getMinimumMessageTime()
-  {
-    return minimumMessageTime;
-  }
 
   @JsonProperty
   public boolean isSkipOffsetGaps()
@@ -147,14 +100,14 @@ public class KafkaIOConfig implements IOConfig
   public String toString()
   {
     return "KafkaIOConfig{" +
-           "taskGroupId=" + taskGroupId +
-           ", baseSequenceName='" + baseSequenceName + '\'' +
-           ", startPartitions=" + startPartitions +
-           ", endPartitions=" + endPartitions +
+           "taskGroupId=" + getTaskGroupId() +
+           ", baseSequenceName='" + getBaseSequenceName() + '\'' +
+           ", startPartitions=" + getStartPartitions() +
+           ", endPartitions=" + getEndPartitions() +
            ", consumerProperties=" + consumerProperties +
-           ", useTransaction=" + useTransaction +
-           ", minimumMessageTime=" + minimumMessageTime +
-           ", maximumMessageTime=" + maximumMessageTime +
+           ", useTransaction=" + isUseTransaction() +
+           ", minimumMessageTime=" + getMinimumMessageTime() +
+           ", maximumMessageTime=" + getMaximumMessageTime() +
            ", skipOffsetGaps=" + skipOffsetGaps +
            '}';
   }

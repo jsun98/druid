@@ -56,7 +56,9 @@ import org.apache.druid.indexing.common.stats.RowIngestionMeters;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.IndexTaskUtils;
 import org.apache.druid.indexing.common.task.RealtimeIndexTask;
-import org.apache.druid.indexing.kafka.KafkaIndexTask.Status;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask.Status;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
+import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -85,6 +87,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
+import javax.annotation.ParametersAreNonnullByDefault;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DefaultValue;
@@ -125,7 +128,7 @@ import java.util.stream.Collectors;
 /**
  * Kafka indexing task runner supporting incremental segments publishing
  */
-public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTaskRunner
+public class IncrementalPublishingKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner<Integer, Long>
 {
   private static final EmittingLogger log = new EmittingLogger(IncrementalPublishingKafkaIndexTaskRunner.class);
   private static final String METADATA_NEXT_PARTITIONS = "nextPartitions";
@@ -342,11 +345,22 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
         ), "Sequence offsets are not compatible with start offsets of task");
         nextOffsets.putAll(sequences.get(0).startOffsets);
       } else {
+        @SuppressWarnings("unchecked")
         final Map<String, Object> restoredMetadataMap = (Map) restoredMetadata;
-        final KafkaPartitions restoredNextPartitions = toolbox.getObjectMapper().convertValue(
-            restoredMetadataMap.get(METADATA_NEXT_PARTITIONS),
-            KafkaPartitions.class
-        );
+        final SeekableStreamPartitions<Integer, Long> restoredNextPartitions = toolbox
+            .getObjectMapper()
+            .convertValue(
+                restoredMetadataMap.get(METADATA_NEXT_PARTITIONS),
+                toolbox.getObjectMapper()
+                       .getTypeFactory()
+                       .constructParametrizedType(
+                           SeekableStreamPartitions.class,
+                           SeekableStreamPartitions.class,
+                           Integer.class,
+                           Long.class
+                       )
+            );
+
         nextOffsets.putAll(restoredNextPartitions.getPartitionOffsetMap());
 
         // Sanity checks.
@@ -387,7 +401,7 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
           public Object getMetadata()
           {
             return ImmutableMap.of(
-                METADATA_NEXT_PARTITIONS, new KafkaPartitions(
+                METADATA_NEXT_PARTITIONS, new SeekableStreamPartitions<>(
                     ioConfig.getStartPartitions().getTopic(),
                     snapshot
                 )
@@ -559,7 +573,7 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
                         }
 
                         @Override
-                        public void onFailure(Throwable t)
+                        public void onFailure(@ParametersAreNonnullByDefault Throwable t)
                         {
                           log.error("Persist failed, dying");
                           backgroundThreadException = t;
@@ -601,8 +615,11 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
                 task.getDataSource(),
                 ioConfig.getTaskGroupId(),
                 task.getIOConfig().getBaseSequenceName(),
-                new KafkaDataSourceMetadata(new KafkaPartitions(topic, sequenceToCheckpoint.getStartOffsets())),
-                new KafkaDataSourceMetadata(new KafkaPartitions(topic, nextOffsets))
+                new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
+                    topic,
+                    sequenceToCheckpoint.getStartOffsets()
+                )),
+                new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, nextOffsets))
             );
             if (!toolbox.getTaskActionClient().submit(checkpointAction)) {
               throw new ISE("Checkpoint request with offsets [%s] failed, dying", nextOffsets);
@@ -868,7 +885,7 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
           }
 
           @Override
-          public void onFailure(Throwable t)
+          public void onFailure(@ParametersAreNonnullByDefault Throwable t)
           {
             log.error(t, "Error while publishing segments for sequence[%s]", sequenceMetadata);
             handoffFuture.setException(t);
@@ -1128,7 +1145,7 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
     boolean result = taskToolbox.getTaskActionClient()
                                 .submit(new ResetDataSourceMetadataAction(
                                     task.getDataSource(),
-                                    new KafkaDataSourceMetadata(new KafkaPartitions(
+                                    new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
                                         ioConfig.getStartPartitions()
                                                 .getTopic(),
                                         partitionOffsetMap
@@ -1435,11 +1452,11 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
 
   private Map<Integer, Map<Integer, Long>> getCheckpoints()
   {
-    TreeMap<Integer, Map<Integer, Long>> result = new TreeMap<>();
-    result.putAll(
-        sequences.stream().collect(Collectors.toMap(SequenceMetadata::getSequenceId, SequenceMetadata::getStartOffsets))
-    );
-    return result;
+    return new TreeMap<>(sequences.stream()
+                                  .collect(Collectors.toMap(
+                                      SequenceMetadata::getSequenceId,
+                                      SequenceMetadata::getStartOffsets
+                                  )));
   }
 
   /**
@@ -1735,8 +1752,8 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
                 // Publish metadata can be different from persist metadata as we are going to publish only
                 // subset of segments
                 return ImmutableMap.of(
-                    METADATA_NEXT_PARTITIONS, new KafkaPartitions(topic, lastPersistedOffsets),
-                    METADATA_PUBLISH_PARTITIONS, new KafkaPartitions(topic, endOffsets)
+                    METADATA_NEXT_PARTITIONS, new SeekableStreamPartitions<>(topic, lastPersistedOffsets),
+                    METADATA_PUBLISH_PARTITIONS, new SeekableStreamPartitions<>(topic, endOffsets)
                 );
               }
               finally {
@@ -1755,9 +1772,16 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
     TransactionalSegmentPublisher createPublisher(TaskToolbox toolbox, boolean useTransaction)
     {
       return (segments, commitMetadata) -> {
-        final KafkaPartitions finalPartitions = toolbox.getObjectMapper().convertValue(
+        final SeekableStreamPartitions<Integer, Long> finalPartitions = toolbox.getObjectMapper().convertValue(
             ((Map) Preconditions.checkNotNull(commitMetadata, "commitMetadata")).get(METADATA_PUBLISH_PARTITIONS),
-            KafkaPartitions.class
+            toolbox.getObjectMapper()
+                   .getTypeFactory()
+                   .constructParametrizedType(
+                       SeekableStreamPartitions.class,
+                       SeekableStreamPartitions.class,
+                       Integer.class,
+                       Long.class
+                   )
         );
 
         // Sanity check, we should only be publishing things that match our desired end state.
@@ -1774,7 +1798,10 @@ public class IncrementalPublishingKafkaIndexTaskRunner implements KafkaIndexTask
         if (useTransaction) {
           action = new SegmentTransactionalInsertAction(
               segments,
-              new KafkaDataSourceMetadata(new KafkaPartitions(finalPartitions.getTopic(), getStartOffsets())),
+              new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
+                  finalPartitions.getTopic(),
+                  getStartOffsets()
+              )),
               new KafkaDataSourceMetadata(finalPartitions)
           );
         } else {

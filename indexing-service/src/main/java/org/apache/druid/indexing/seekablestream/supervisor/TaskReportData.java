@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.apache.druid.indexing.kafka.supervisor;
+package org.apache.druid.indexing.seekablestream.supervisor;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -26,29 +26,24 @@ import org.joda.time.DateTime;
 import javax.annotation.Nullable;
 import java.util.Map;
 
-public class TaskReportData
+public class TaskReportData<partitionType, sequenceType>
 {
-  public enum TaskType
-  {
-    ACTIVE, PUBLISHING, UNKNOWN
-  }
-
   private final String id;
-  private final Map<Integer, Long> startingOffsets;
+  private final Map<partitionType, sequenceType> startingOffsets;
   private final DateTime startTime;
   private final Long remainingSeconds;
   private final TaskType type;
-  private final Map<Integer, Long> currentOffsets;
-  private final Map<Integer, Long> lag;
+  private Map<partitionType, sequenceType> currentOffsets;
+  private final Map<partitionType, sequenceType> lag;
 
   public TaskReportData(
       String id,
-      @Nullable Map<Integer, Long> startingOffsets,
-      @Nullable Map<Integer, Long> currentOffsets,
+      @Nullable Map<partitionType, sequenceType> startingOffsets,
+      @Nullable Map<partitionType, sequenceType> currentOffsets,
       @Nullable DateTime startTime,
       Long remainingSeconds,
       TaskType type,
-      @Nullable Map<Integer, Long> lag
+      @Nullable Map<partitionType, sequenceType> lag
   )
   {
     this.id = id;
@@ -68,14 +63,14 @@ public class TaskReportData
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getStartingOffsets()
+  public Map<partitionType, sequenceType> getStartingOffsets()
   {
     return startingOffsets;
   }
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getCurrentOffsets()
+  public Map<partitionType, sequenceType> getCurrentOffsets()
   {
     return currentOffsets;
   }
@@ -100,9 +95,14 @@ public class TaskReportData
 
   @JsonProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
-  public Map<Integer, Long> getLag()
+  public Map<partitionType, sequenceType> getLag()
   {
     return lag;
+  }
+
+  public void setCurrentSequenceNumbers(Map<partitionType, sequenceType> currentOffsets)
+  {
+    this.currentOffsets = currentOffsets;
   }
 
   @Override
@@ -116,5 +116,10 @@ public class TaskReportData
            ", remainingSeconds=" + remainingSeconds +
            (lag != null ? ", lag=" + lag : "") +
            '}';
+  }
+
+  public enum TaskType
+  {
+    ACTIVE, PUBLISHING, UNKNOWN
   }
 }

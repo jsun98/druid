@@ -16,13 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.druid.indexing.kafka;
+package org.apache.druid.indexing.seekablestream;
+
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.indexing.common.TaskToolbox;
 import org.apache.druid.indexing.common.stats.RowIngestionMeters;
-import org.apache.druid.indexing.kafka.KafkaIndexTask.Status;
 import org.apache.druid.segment.realtime.appenderator.Appenderator;
 import org.apache.druid.segment.realtime.firehose.ChatHandler;
 
@@ -30,15 +30,13 @@ import javax.ws.rs.core.Response;
 import java.util.Map;
 
 /**
- * This class is used by only {@link KafkaIndexTask}. We currently have two implementations of this interface, i.e.,
- * {@link IncrementalPublishingKafkaIndexTaskRunner} and {@link LegacyKafkaIndexTaskRunner}. The latter one was used in
- * the versions prior to 0.12.0, but being kept to support rolling update from them.
+ * Interface for abstracting the indexing task run logic. Only used by Kafka indexing tasks,
+ * but will also be used by Kinesis indexing tasks once implemented
  *
- * We don't have a good reason for having this interface except for better code maintenance for the latest kakfa
- * indexing algorithm. As a result, this interface can be removed in the future when {@link LegacyKafkaIndexTaskRunner}
- * is removed and it's no longer useful.
+ * @param <partitionType> Partition Number Type
+ * @param <sequenceType> Sequence Number Type
  */
-public interface KafkaIndexTaskRunner extends ChatHandler
+public interface SeekableStreamIndexTaskRunner<partitionType, sequenceType> extends ChatHandler
 {
   Appenderator getAppenderator();
 
@@ -46,25 +44,27 @@ public interface KafkaIndexTaskRunner extends ChatHandler
 
   void stopGracefully();
 
-  // The below methods are mostly for unit testing.
-
   @VisibleForTesting
   RowIngestionMeters getRowIngestionMeters();
-  @VisibleForTesting
-  Status getStatus();
 
   @VisibleForTesting
-  Map<Integer, Long> getCurrentOffsets();
+  SeekableStreamIndexTask.Status getStatus();
+
   @VisibleForTesting
-  Map<Integer, Long> getEndOffsets();
+  Map<partitionType, sequenceType> getCurrentOffsets();
+
+  @VisibleForTesting
+  Map<partitionType, sequenceType> getEndOffsets();
+
   @VisibleForTesting
   Response setEndOffsets(
-      Map<Integer, Long> offsets,
+      Map<partitionType, sequenceType> offsets,
       boolean finish // this field is only for internal purposes, shouldn't be usually set by users
   ) throws InterruptedException;
 
   @VisibleForTesting
   Response pause() throws InterruptedException;
+
   @VisibleForTesting
   void resume() throws InterruptedException;
 }

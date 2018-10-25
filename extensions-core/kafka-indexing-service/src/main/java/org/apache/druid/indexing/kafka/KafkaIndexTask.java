@@ -24,25 +24,19 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Joiner;
-import com.google.common.base.Optional;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import org.apache.druid.data.input.InputRow;
-import org.apache.druid.data.input.impl.InputRowParser;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.indexing.appenderator.ActionBasedSegmentAllocator;
 import org.apache.druid.indexing.appenderator.ActionBasedUsedSegmentChecker;
 import org.apache.druid.indexing.common.TaskToolbox;
 import org.apache.druid.indexing.common.actions.SegmentAllocateAction;
-import org.apache.druid.indexing.common.actions.TaskActionClient;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
-import org.apache.druid.indexing.common.task.AbstractTask;
-import org.apache.druid.indexing.common.task.RealtimeIndexTask;
 import org.apache.druid.indexing.common.task.TaskResource;
-import org.apache.druid.indexing.common.task.Tasks;
-import org.apache.druid.indexing.kafka.supervisor.KafkaSupervisor;
 import org.apache.druid.indexing.kafka.supervisor.KafkaSupervisorIOConfig;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
+import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervisor;
 import org.apache.druid.java.util.common.Intervals;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.parsers.ParseException;
@@ -56,45 +50,26 @@ import org.apache.druid.segment.realtime.FireDepartmentMetrics;
 import org.apache.druid.segment.realtime.appenderator.Appenderator;
 import org.apache.druid.segment.realtime.appenderator.Appenderators;
 import org.apache.druid.segment.realtime.appenderator.StreamAppenderatorDriver;
-import org.apache.druid.segment.realtime.firehose.ChatHandler;
 import org.apache.druid.segment.realtime.firehose.ChatHandlerProvider;
 import org.apache.druid.server.security.AuthorizerMapper;
-import org.apache.druid.utils.CircularBuffer;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 
-import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-public class KafkaIndexTask extends AbstractTask implements ChatHandler
+public class KafkaIndexTask extends SeekableStreamIndexTask<Integer, Long>
 {
-  public enum Status
-  {
-    NOT_STARTED,
-    STARTING,
-    READING,
-    PAUSED,
-    PUBLISHING
-    // ideally this should be called FINISHING now as the task does incremental publishes
-    // through out its lifetime
-  }
 
   private static final EmittingLogger log = new EmittingLogger(KafkaIndexTask.class);
-  private static final String TYPE = "index_kafka";
   static final long POLL_TIMEOUT_MILLIS = TimeUnit.MILLISECONDS.toMillis(100);
   static final long LOCK_ACQUIRE_TIMEOUT_SECONDS = 15;
 
-  private final DataSchema dataSchema;
-  private final InputRowParser<ByteBuffer> parser;
-  private final KafkaTuningConfig tuningConfig;
-  private final KafkaIOConfig ioConfig;
-  private final Optional<ChatHandlerProvider> chatHandlerProvider;
-  private final KafkaIndexTaskRunner runner;
+  private final SeekableStreamIndexTaskRunner<Integer, Long> runner;
   private final ObjectMapper configMapper;
 
   // This value can be tuned in some tests
@@ -115,28 +90,20 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
   )
   {
     super(
-        id == null ? makeTaskId(dataSchema.getDataSource()) : id,
-        StringUtils.format("%s_%s", TYPE, dataSchema.getDataSource()),
+        id,
         taskResource,
-        dataSchema.getDataSource(),
-        context
+        dataSchema,
+        tuningConfig,
+        ioConfig,
+        context,
+        chatHandlerProvider,
+        authorizerMapper,
+        rowIngestionMetersFactory,
+        "index_kafka"
     );
-
-    this.dataSchema = Preconditions.checkNotNull(dataSchema, "dataSchema");
-    this.parser = Preconditions.checkNotNull((InputRowParser<ByteBuffer>) dataSchema.getParser(), "parser");
-    this.tuningConfig = Preconditions.checkNotNull(tuningConfig, "tuningConfig");
-    this.ioConfig = Preconditions.checkNotNull(ioConfig, "ioConfig");
-    this.chatHandlerProvider = Optional.fromNullable(chatHandlerProvider);
     this.configMapper = configMapper;
-    final CircularBuffer<Throwable> savedParseExceptions;
-    if (tuningConfig.getMaxSavedParseExceptions() > 0) {
-      savedParseExceptions = new CircularBuffer<>(tuningConfig.getMaxSavedParseExceptions());
-    } else {
-      savedParseExceptions = null;
-    }
-
-    if (context != null && context.get(KafkaSupervisor.IS_INCREMENTAL_HANDOFF_SUPPORTED) != null
-        && ((boolean) context.get(KafkaSupervisor.IS_INCREMENTAL_HANDOFF_SUPPORTED))) {
+    if (context != null && context.get(SeekableStreamSupervisor.IS_INCREMENTAL_HANDOFF_SUPPORTED) != null
+        && ((boolean) context.get(SeekableStreamSupervisor.IS_INCREMENTAL_HANDOFF_SUPPORTED))) {
       runner = new IncrementalPublishingKafkaIndexTaskRunner(
           this,
           parser,
@@ -161,48 +128,6 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
   {
     return pollRetryMs;
   }
-
-  private static String makeTaskId(String dataSource)
-  {
-    return Joiner.on("_").join(TYPE, dataSource, RealtimeIndexTask.makeRandomId());
-  }
-
-  @Override
-  public int getPriority()
-  {
-    return getContextValue(Tasks.PRIORITY_KEY, Tasks.DEFAULT_REALTIME_TASK_PRIORITY);
-  }
-
-  @Override
-  public String getType()
-  {
-    return TYPE;
-  }
-
-  @Override
-  public boolean isReady(TaskActionClient taskActionClient)
-  {
-    return true;
-  }
-
-  @JsonProperty
-  public DataSchema getDataSchema()
-  {
-    return dataSchema;
-  }
-
-  @JsonProperty
-  public KafkaTuningConfig getTuningConfig()
-  {
-    return tuningConfig;
-  }
-
-  @JsonProperty("ioConfig")
-  public KafkaIOConfig getIOConfig()
-  {
-    return ioConfig;
-  }
-
 
   @Override
   public TaskStatus run(final TaskToolbox toolbox)
@@ -290,7 +215,7 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
 
       final Properties props = new Properties();
 
-      addConsumerPropertiesFromConfig(props, configMapper, ioConfig.getConsumerProperties());
+      addConsumerPropertiesFromConfig(props, configMapper, ((KafkaIOConfig) ioConfig).getConsumerProperties());
 
       props.setProperty("enable.auto.commit", "false");
       props.setProperty("auto.offset.reset", "none");
@@ -304,7 +229,11 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
     }
   }
 
-  public static void addConsumerPropertiesFromConfig(Properties properties, ObjectMapper configMapper, Map<String, Object> consumerProperties)
+  public static void addConsumerPropertiesFromConfig(
+      Properties properties,
+      ObjectMapper configMapper,
+      Map<String, Object> consumerProperties
+  )
   {
     // Extract passwords before SSL connection to Kafka
     for (Map.Entry<String, Object> entry : consumerProperties.entrySet()) {
@@ -322,6 +251,7 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
       }
     }
   }
+
 
   static void assignPartitions(
       final KafkaConsumer consumer,
@@ -371,6 +301,13 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
     return !beforeMinimumMessageTime && !afterMaximumMessageTime;
   }
 
+  @Override
+  @JsonProperty
+  public KafkaTuningConfig getTuningConfig()
+  {
+    return (KafkaTuningConfig) super.getTuningConfig();
+  }
+
   @VisibleForTesting
   void setPollRetryMs(long retryMs)
   {
@@ -384,8 +321,15 @@ public class KafkaIndexTask extends AbstractTask implements ChatHandler
   }
 
   @VisibleForTesting
-  KafkaIndexTaskRunner getRunner()
+  SeekableStreamIndexTaskRunner<Integer, Long> getRunner()
   {
     return runner;
+  }
+
+  @Override
+  @JsonProperty("ioConfig")
+  public KafkaIOConfig getIOConfig()
+  {
+    return (KafkaIOConfig) super.getIOConfig();
   }
 }

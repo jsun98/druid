@@ -46,7 +46,9 @@ import org.apache.druid.indexing.common.stats.RowIngestionMeters;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.IndexTaskUtils;
 import org.apache.druid.indexing.common.task.RealtimeIndexTask;
-import org.apache.druid.indexing.kafka.KafkaIndexTask.Status;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask.Status;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
+import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -87,6 +89,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -109,7 +112,7 @@ import java.util.stream.Collectors;
  * This class will be removed in a future release.
  */
 @Deprecated
-public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
+public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner<Integer, Long>
 {
   private static final EmittingLogger log = new EmittingLogger(LegacyKafkaIndexTaskRunner.class);
   private static final String METADATA_NEXT_PARTITIONS = "nextPartitions";
@@ -282,9 +285,14 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
         nextOffsets.putAll(ioConfig.getStartPartitions().getPartitionOffsetMap());
       } else {
         final Map<String, Object> restoredMetadataMap = (Map) restoredMetadata;
-        final KafkaPartitions restoredNextPartitions = toolbox.getObjectMapper().convertValue(
+        final SeekableStreamPartitions<Integer, Long> restoredNextPartitions = toolbox.getObjectMapper().convertValue(
             restoredMetadataMap.get(METADATA_NEXT_PARTITIONS),
-            KafkaPartitions.class
+            toolbox.getObjectMapper().getTypeFactory().constructParametrizedType(
+                SeekableStreamPartitions.class,
+                SeekableStreamPartitions.class,
+                Integer.class,
+                Long.class
+            )
         );
         nextOffsets.putAll(restoredNextPartitions.getPartitionOffsetMap());
 
@@ -326,7 +334,7 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
             public Object getMetadata()
             {
               return ImmutableMap.of(
-                  METADATA_NEXT_PARTITIONS, new KafkaPartitions(
+                  METADATA_NEXT_PARTITIONS, new SeekableStreamPartitions<>(
                       ioConfig.getStartPartitions().getTopic(),
                       snapshot
                   )
@@ -455,9 +463,9 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
                 if (isPersistRequired) {
                   driver.persist(committerSupplier.get());
                 }
-                segmentsToMoveOut.entrySet().forEach(sequenceSegments -> driver.moveSegmentOut(
-                    sequenceSegments.getKey(),
-                    sequenceSegments.getValue().stream().collect(Collectors.toList())
+                segmentsToMoveOut.forEach((key, value) -> driver.moveSegmentOut(
+                    key,
+                    new ArrayList<SegmentIdentifier>(value)
                 ));
               }
               catch (ParseException e) {
@@ -494,9 +502,16 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
       }
 
       final TransactionalSegmentPublisher publisher = (segments, commitMetadata) -> {
-        final KafkaPartitions finalPartitions = toolbox.getObjectMapper().convertValue(
+        final SeekableStreamPartitions<Integer, Long> finalPartitions = toolbox.getObjectMapper().convertValue(
             ((Map) Preconditions.checkNotNull(commitMetadata, "commitMetadata")).get(METADATA_NEXT_PARTITIONS),
-            KafkaPartitions.class
+            toolbox.getObjectMapper()
+                   .getTypeFactory()
+                   .constructParametrizedType(
+                       SeekableStreamPartitions.class,
+                       SeekableStreamPartitions.class,
+                       Integer.class,
+                       Long.class
+                   )
         );
 
         // Sanity check, we should only be publishing things that match our desired end state.
@@ -530,9 +545,9 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
       ).get();
 
       final List<String> publishedSegments = published.getSegments()
-                                                       .stream()
-                                                       .map(DataSegment::getIdentifier)
-                                                       .collect(Collectors.toList());
+                                                      .stream()
+                                                      .map(DataSegment::getIdentifier)
+                                                      .collect(Collectors.toList());
 
       log.info(
           "Published segments[%s] with metadata[%s].",
@@ -615,7 +630,7 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
       }
     }
 
-    task.assignPartitions(consumer, topic, assignment);
+    KafkaIndexTask.assignPartitions(consumer, topic, assignment);
 
     // Seek to starting offsets.
     for (final int partition : assignment) {
@@ -715,7 +730,7 @@ public class LegacyKafkaIndexTaskRunner implements KafkaIndexTaskRunner
     boolean result = taskToolbox.getTaskActionClient()
                                 .submit(new ResetDataSourceMetadataAction(
                                     task.getDataSource(),
-                                    new KafkaDataSourceMetadata(new KafkaPartitions(
+                                    new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
                                         ioConfig.getStartPartitions()
                                                 .getTopic(),
                                         partitionOffsetMap
