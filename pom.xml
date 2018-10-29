@@ -948,7 +948,9 @@
             <signaturesFile>${project.parent.basedir}/codestyle/joda-time-forbidden-apis.txt</signaturesFile>
             <signaturesFile>${project.parent.basedir}/codestyle/druid-forbidden-apis.txt</signaturesFile>
           </signaturesFiles>
-          <suppressAnnotations><annotation>**.SuppressForbidden</annotation></suppressAnnotations>
+          <suppressAnnotations>
+            <annotation>**.SuppressForbidden</annotation>
+          </suppressAnnotations>
         </configuration>
         <executions>
           <execution>

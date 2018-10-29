@@ -242,7 +242,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected SeekableStreamSupervisorReportPayload<String, String> createReportPayload(
-      int numPartitions, boolean includeOffsets
+      int numPartitions,
+      boolean includeOffsets
   )
   {
     KinesisSupervisorIOConfig ioConfig = spec.getIoConfig();
@@ -265,7 +266,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected SeekableStreamDataSourceMetadata<String, String> createDataSourceMetaData(
-      String stream, Map<String, String> map
+      String stream,
+      Map<String, String> map
   )
   {
     return new KinesisDataSourceMetadata(
@@ -275,7 +277,9 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected OrderedSequenceNumber<String> makeSequenceNumber(
-      String seq, boolean useExclusive, boolean isExclusive
+      String seq,
+      boolean useExclusive,
+      boolean isExclusive
   )
   {
     return KinesisSequenceNumber.of(seq, useExclusive, isExclusive);

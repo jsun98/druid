@@ -319,7 +319,8 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected KafkaDataSourceMetadata createDataSourceMetaData(
-      String topic, Map<Integer, Long> map
+      String topic,
+      Map<Integer, Long> map
   )
   {
     return new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, map));
@@ -327,7 +328,9 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected OrderedSequenceNumber<Long> makeSequenceNumber(
-      Long seq, boolean useExclusive, boolean isExclusive
+      Long seq,
+      boolean useExclusive,
+      boolean isExclusive
   )
   {
     return KafkaSequenceNumber.of(seq);
@@ -371,7 +374,8 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected boolean checkSequenceAvailability(
-      @NotNull Integer partition, @NotNull Long sequenceFromMetadata
+      @NotNull Integer partition,
+      @NotNull Long sequenceFromMetadata
   ) throws TimeoutException
   {
     Long latestOffset = getOffsetFromStreamForPartition(partition, false);

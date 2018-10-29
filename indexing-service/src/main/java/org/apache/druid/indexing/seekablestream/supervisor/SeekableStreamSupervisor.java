@@ -832,9 +832,9 @@ public abstract class SeekableStreamSupervisor<partitionType, sequenceType>
           Map<partitionType, sequenceType> currentOffsets = entry.getValue().currentSequences;
           Long remainingSeconds = null;
           if (startTime != null) {
-            remainingSeconds = Math.max(
-                0, ioConfig.getTaskDuration().getMillis() - (System.currentTimeMillis() - startTime.getMillis())
-            ) / 1000;
+            long elapsedMillis = System.currentTimeMillis() - startTime.getMillis();
+            long remainingMillis = Math.max(0, ioConfig.getTaskDuration().getMillis() - elapsedMillis);
+            remainingSeconds = TimeUnit.MILLISECONDS.toSeconds(remainingMillis);
           }
 
           taskReports.add(
@@ -1058,29 +1058,33 @@ public abstract class SeekableStreamSupervisor<partitionType, sequenceType>
 
     Optional<TaskRunner> taskRunner = taskMaster.getTaskRunner();
     if (taskRunner.isPresent()) {
-      taskRunner.get().registerListener(
-          new TaskRunnerListener()
-          {
-            @Override
-            public String getListenerId()
+      try {
+        taskRunner.get().registerListener(
+            new TaskRunnerListener()
             {
-              return supervisorId;
-            }
+              @Override
+              public String getListenerId()
+              {
+                return supervisorId;
+              }
 
-            @Override
-            public void locationChanged(final String taskId, final TaskLocation newLocation)
-            {
-              // do nothing
-            }
+              @Override
+              public void locationChanged(final String taskId, final TaskLocation newLocation)
+              {
+                // do nothing
+              }
 
-            @Override
-            public void statusChanged(String taskId, TaskStatus status)
-            {
-              notices.add(new RunNotice());
-            }
-          }, MoreExecutors.sameThreadExecutor()
-      );
-
+              @Override
+              public void statusChanged(String taskId, TaskStatus status)
+              {
+                notices.add(new RunNotice());
+              }
+            }, MoreExecutors.sameThreadExecutor()
+        );
+      }
+      catch (ISE e) {
+        log.info("listener already registered with taskrunner.");
+      }
       listenerRegistered = true;
     }
   }
@@ -1731,7 +1735,7 @@ public abstract class SeekableStreamSupervisor<partitionType, sequenceType>
       return;
     }
 
-    if (partitionIds == null) {
+    if (partitionIds == null || partitionIds.size() == 0) {
       log.warn("No partitions found for stream[%s]", ioConfig.getId());
       return;
     }
@@ -1748,6 +1752,7 @@ public abstract class SeekableStreamSupervisor<partitionType, sequenceType>
     boolean initialPartitionDiscovery = this.partitionIds.isEmpty();
     for (partitionType partitionId : partitionIds) {
       if (closedPartitions.contains(partitionId)) {
+        log.info("partition [%s] is closed and has no more data, skipping.", partitionId);
         continue;
       }
 
