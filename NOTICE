@@ -98,3 +98,10 @@ This product contains histogram percentile computation code adapted from Netflix
     * https://github.com/Netflix/spectator/blob/master/LICENSE (Apache License, Version 2.0)
   * HOMEPAGE:
     * https://github.com/Netflix/spectator
+
+
+This product contains code adapted from Apache Hive
+  * LICENSE:
+    * https://github.com/apache/hive/blob/master/LICENSE (Apache License, Version 2.0)
+  * HOMEPAGE:
+    * https://hive.apache.org/

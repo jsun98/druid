@@ -30,7 +30,6 @@ import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.query.cache.CacheKeyBuilder;
 import org.apache.druid.query.extraction.ExtractionFn;
 import org.apache.druid.segment.filter.DimensionPredicateFilter;
-import org.apache.hive.common.util.BloomFilter;
 
 import java.util.HashSet;
 
@@ -40,22 +39,22 @@ public class BloomDimFilter implements DimFilter
 {
 
   private final String dimension;
-  private final BloomFilter bloomFilter;
+  private final BloomKFilter bloomKFilter;
   private final HashCode hash;
   private final ExtractionFn extractionFn;
 
   @JsonCreator
   public BloomDimFilter(
       @JsonProperty("dimension") String dimension,
-      @JsonProperty("bloomFilter") BloomFilterHolder bloomFilterHolder,
+      @JsonProperty("bloomKFilter") BloomKFilterHolder bloomKFilterHolder,
       @JsonProperty("extractionFn") ExtractionFn extractionFn
   )
   {
     Preconditions.checkArgument(dimension != null, "dimension must not be null");
-    Preconditions.checkNotNull(bloomFilterHolder);
+    Preconditions.checkNotNull(bloomKFilterHolder);
     this.dimension = dimension;
-    this.bloomFilter = bloomFilterHolder.getFilter();
-    this.hash = bloomFilterHolder.getFilterHash();
+    this.bloomKFilter = bloomKFilterHolder.getFilter();
+    this.hash = bloomKFilterHolder.getFilterHash();
     this.extractionFn = extractionFn;
   }
 
@@ -90,9 +89,9 @@ public class BloomDimFilter implements DimFilter
           {
             return str -> {
               if (str == null) {
-                return bloomFilter.testBytes(null, 0, 0);
+                return bloomKFilter.testBytes(null, 0, 0);
               }
-              return bloomFilter.testString(str);
+              return bloomKFilter.testString(str);
             };
           }
 
@@ -104,13 +103,13 @@ public class BloomDimFilter implements DimFilter
               @Override
               public boolean applyLong(long input)
               {
-                return bloomFilter.testLong(input);
+                return bloomKFilter.testLong(input);
               }
 
               @Override
               public boolean applyNull()
               {
-                return bloomFilter.testBytes(null, 0, 0);
+                return bloomKFilter.testBytes(null, 0, 0);
               }
             };
           }
@@ -123,13 +122,13 @@ public class BloomDimFilter implements DimFilter
               @Override
               public boolean applyFloat(float input)
               {
-                return bloomFilter.testDouble(input);
+                return bloomKFilter.testFloat(input);
               }
 
               @Override
               public boolean applyNull()
               {
-                return bloomFilter.testBytes(null, 0, 0);
+                return bloomKFilter.testBytes(null, 0, 0);
               }
             };
           }
@@ -142,13 +141,13 @@ public class BloomDimFilter implements DimFilter
               @Override
               public boolean applyDouble(double input)
               {
-                return bloomFilter.testDouble(input);
+                return bloomKFilter.testDouble(input);
               }
 
               @Override
               public boolean applyNull()
               {
-                return bloomFilter.testBytes(null, 0, 0);
+                return bloomKFilter.testBytes(null, 0, 0);
               }
             };
           }
@@ -164,9 +163,9 @@ public class BloomDimFilter implements DimFilter
   }
 
   @JsonProperty
-  public BloomFilter getBloomFilter()
+  public BloomKFilter getBloomKFilter()
   {
-    return bloomFilter;
+    return bloomKFilter;
   }
 
   @JsonProperty

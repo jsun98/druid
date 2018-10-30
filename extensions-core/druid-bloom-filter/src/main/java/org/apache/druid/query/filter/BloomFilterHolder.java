@@ -22,23 +22,22 @@ package org.apache.druid.query.filter;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.Hashing;
 import org.apache.druid.guice.BloomFilterSerializersModule;
-import org.apache.hive.common.util.BloomFilter;
 
 import java.io.IOException;
 import java.util.Objects;
 
-public class BloomFilterHolder
+public class BloomKFilterHolder
 {
-  private final BloomFilter filter;
+  private final BloomKFilter filter;
   private final HashCode hash;
 
-  public BloomFilterHolder(BloomFilter filter, HashCode hash)
+  public BloomKFilterHolder(BloomKFilter filter, HashCode hash)
   {
     this.filter = filter;
     this.hash = hash;
   }
 
-  BloomFilter getFilter()
+  BloomKFilter getFilter()
   {
     return filter;
   }
@@ -48,17 +47,17 @@ public class BloomFilterHolder
     return hash;
   }
 
-  public static BloomFilterHolder fromBloomFilter(BloomFilter filter) throws IOException
+  public static BloomKFilterHolder fromBloomKFilter(BloomKFilter filter) throws IOException
   {
-    byte[] bytes = BloomFilterSerializersModule.bloomFilterToBytes(filter);
+    byte[] bytes = BloomFilterSerializersModule.bloomKFilterToBytes(filter);
 
-    return new BloomFilterHolder(filter, Hashing.sha512().hashBytes(bytes));
+    return new BloomKFilterHolder(filter, Hashing.sha512().hashBytes(bytes));
   }
 
-  public static BloomFilterHolder fromBytes(byte[] bytes) throws IOException
+  public static BloomKFilterHolder fromBytes(byte[] bytes) throws IOException
   {
-    return new BloomFilterHolder(
-        BloomFilterSerializersModule.bloomFilterFromBytes(bytes),
+    return new BloomKFilterHolder(
+        BloomFilterSerializersModule.bloomKFilterFromBytes(bytes),
         Hashing.sha512().hashBytes(bytes)
     );
   }
@@ -73,7 +72,7 @@ public class BloomFilterHolder
       return false;
     }
 
-    BloomFilterHolder that = (BloomFilterHolder) o;
+    BloomKFilterHolder that = (BloomKFilterHolder) o;
     return Objects.equals(this.hash, that.hash);
   }
 

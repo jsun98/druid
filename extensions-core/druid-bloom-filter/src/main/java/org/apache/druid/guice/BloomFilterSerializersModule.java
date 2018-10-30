@@ -27,8 +27,8 @@ import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import org.apache.druid.query.filter.BloomDimFilter;
-import org.apache.druid.query.filter.BloomFilterHolder;
-import org.apache.hive.common.util.BloomFilter;
+import org.apache.druid.query.filter.BloomKFilter;
+import org.apache.druid.query.filter.BloomKFilterHolder;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -41,66 +41,65 @@ public class BloomFilterSerializersModule extends SimpleModule
   public BloomFilterSerializersModule()
   {
     registerSubtypes(new NamedType(BloomDimFilter.class, BLOOM_FILTER_TYPE_NAME));
-    addSerializer(BloomFilter.class, new BloomFilterSerializer());
-    addDeserializer(BloomFilter.class, new BloomFilterDeserializer());
-    addDeserializer(BloomFilterHolder.class, new BloomFilterHolderDeserializer());
+    addSerializer(BloomKFilter.class, new BloomKFilterSerializer());
+    addDeserializer(BloomKFilter.class, new BloomKFilterDeserializer());
+    addDeserializer(BloomKFilterHolder.class, new BloomKFilterHolderDeserializer());
   }
 
-  private static class BloomFilterSerializer extends StdSerializer<BloomFilter>
+  private static class BloomKFilterSerializer extends StdSerializer<BloomKFilter>
   {
-    BloomFilterSerializer()
+    BloomKFilterSerializer()
     {
-      super(BloomFilter.class);
+      super(BloomKFilter.class);
     }
 
     @Override
-    public void serialize(BloomFilter bloomFilter, JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
+    public void serialize(BloomKFilter bloomKFilter, JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
         throws IOException
     {
-      jsonGenerator.writeBinary(bloomFilterToBytes(bloomFilter));
+      jsonGenerator.writeBinary(bloomKFilterToBytes(bloomKFilter));
     }
   }
 
-  private static class BloomFilterDeserializer extends StdDeserializer<BloomFilter>
+  private static class BloomKFilterDeserializer extends StdDeserializer<BloomKFilter>
   {
-    BloomFilterDeserializer()
+    BloomKFilterDeserializer()
     {
-      super(BloomFilter.class);
+      super(BloomKFilter.class);
     }
 
     @Override
-    public BloomFilter deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+    public BloomKFilter deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
         throws IOException
     {
-      return bloomFilterFromBytes(jsonParser.getBinaryValue());
+      return bloomKFilterFromBytes(jsonParser.getBinaryValue());
     }
   }
 
-  private static class BloomFilterHolderDeserializer extends StdDeserializer<BloomFilterHolder>
+  private static class BloomKFilterHolderDeserializer extends StdDeserializer<BloomKFilterHolder>
   {
-    BloomFilterHolderDeserializer()
+    BloomKFilterHolderDeserializer()
     {
-      super(BloomFilterHolder.class);
+      super(BloomKFilterHolder.class);
     }
 
     @Override
-    public BloomFilterHolder deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+    public BloomKFilterHolder deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
         throws IOException
     {
-      byte[] bytes = jsonParser.getBinaryValue();
-      return BloomFilterHolder.fromBytes(bytes);
+      return BloomKFilterHolder.fromBytes(jsonParser.getBinaryValue());
     }
   }
 
-  public static byte[] bloomFilterToBytes(BloomFilter bloomFilter) throws IOException
+  public static byte[] bloomKFilterToBytes(BloomKFilter bloomKFilter) throws IOException
   {
     ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-    BloomFilter.serialize(byteArrayOutputStream, bloomFilter);
+    BloomKFilter.serialize(byteArrayOutputStream, bloomKFilter);
     return byteArrayOutputStream.toByteArray();
   }
 
-  public static BloomFilter bloomFilterFromBytes(byte[] bytes) throws IOException
+  public static BloomKFilter bloomKFilterFromBytes(byte[] bytes) throws IOException
   {
-    return BloomFilter.deserialize(new ByteArrayInputStream(bytes));
+    return BloomKFilter.deserialize(new ByteArrayInputStream(bytes));
   }
 }
