@@ -36,7 +36,7 @@ import org.apache.druid.query.Druids;
 import org.apache.druid.query.aggregation.CountAggregatorFactory;
 import org.apache.druid.query.expression.LookupEnabledTestExprMacroTable;
 import org.apache.druid.query.filter.BloomDimFilter;
-import org.apache.druid.query.filter.BloomKFilterHolder;
+import org.apache.druid.query.filter.BloomFilterHolder;
 import org.apache.druid.query.filter.OrDimFilter;
 import org.apache.druid.query.lookup.LookupReferencesManager;
 import org.apache.druid.segment.TestHelper;
@@ -48,7 +48,7 @@ import org.apache.druid.sql.calcite.planner.DruidOperatorTable;
 import org.apache.druid.sql.calcite.planner.PlannerConfig;
 import org.apache.druid.sql.calcite.util.CalciteTests;
 import org.apache.druid.sql.calcite.util.QueryLogHook;
-import org.apache.hive.common.util.BloomKFilter;
+import org.apache.hive.common.util.BloomFilter;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -89,9 +89,9 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
   @Test
   public void testBloomFilter() throws Exception
   {
-    BloomKFilter filter = new BloomKFilter(1500);
+    BloomFilter filter = new BloomFilter(1500);
     filter.addString("def");
-    byte[] bytes = BloomFilterSerializersModule.bloomKFilterToBytes(filter);
+    byte[] bytes = BloomFilterSerializersModule.bloomFilterToBytes(filter);
     String base64 = Base64.encodeBase64String(bytes);
 
     testQuery(
@@ -102,7 +102,7 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
                   .intervals(QSS(Filtration.eternity()))
                   .granularity(Granularities.ALL)
                   .filters(
-                      new BloomDimFilter("dim1", BloomKFilterHolder.fromBloomKFilter(filter), null)
+                      new BloomDimFilter("dim1", BloomFilterHolder.fromBloomFilter(filter), null)
                   )
                   .aggregators(AGGS(new CountAggregatorFactory("a0")))
                   .context(TIMESERIES_CONTEXT_DEFAULT)
@@ -117,9 +117,9 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
   @Test
   public void testBloomFilterSubst() throws Exception
   {
-    BloomKFilter filter = new BloomKFilter(1_000_000);
+    BloomFilter filter = new BloomFilter(1_000_000);
     filter.addString("def");
-    byte[] bytes = BloomFilterSerializersModule.bloomKFilterToBytes(filter);
+    byte[] bytes = BloomFilterSerializersModule.bloomFilterToBytes(filter);
     String base64 = Base64.encodeBase64String(bytes);
 
     Map<String, Object> context = new HashMap<>(TIMESERIES_CONTEXT_DEFAULT);
@@ -134,7 +134,7 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
                   .intervals(QSS(Filtration.eternity()))
                   .granularity(Granularities.ALL)
                   .filters(
-                      new BloomDimFilter("dim1", BloomKFilterHolder.fromBloomKFilter(filter), null)
+                      new BloomDimFilter("dim1", BloomFilterHolder.fromBloomFilter(filter), null)
                   )
                   .aggregators(AGGS(new CountAggregatorFactory("a0")))
                   .context(TIMESERIES_CONTEXT_DEFAULT)
@@ -149,12 +149,12 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
   @Test
   public void testBloomFilters() throws Exception
   {
-    BloomKFilter filter = new BloomKFilter(1500);
+    BloomFilter filter = new BloomFilter(1500);
     filter.addString("def");
-    BloomKFilter filter2 = new BloomKFilter(1500);
+    BloomFilter filter2 = new BloomFilter(1500);
     filter.addString("abc");
-    byte[] bytes = BloomFilterSerializersModule.bloomKFilterToBytes(filter);
-    byte[] bytes2 = BloomFilterSerializersModule.bloomKFilterToBytes(filter2);
+    byte[] bytes = BloomFilterSerializersModule.bloomFilterToBytes(filter);
+    byte[] bytes2 = BloomFilterSerializersModule.bloomFilterToBytes(filter2);
     String base64 = Base64.encodeBase64String(bytes);
     String base642 = Base64.encodeBase64String(bytes2);
 
@@ -168,8 +168,8 @@ public class BloomDimFilterSqlTest extends BaseCalciteQueryTest
                   .granularity(Granularities.ALL)
                   .filters(
                       new OrDimFilter(
-                          new BloomDimFilter("dim1", BloomKFilterHolder.fromBloomKFilter(filter), null),
-                          new BloomDimFilter("dim2", BloomKFilterHolder.fromBloomKFilter(filter2), null)
+                          new BloomDimFilter("dim1", BloomFilterHolder.fromBloomFilter(filter), null),
+                          new BloomDimFilter("dim2", BloomFilterHolder.fromBloomFilter(filter2), null)
                       )
                   )
                   .aggregators(AGGS(new CountAggregatorFactory("a0")))

@@ -30,7 +30,7 @@ import org.apache.commons.codec.binary.Base64;
 import org.apache.druid.guice.BloomFilterSerializersModule;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.query.filter.BloomDimFilter;
-import org.apache.druid.query.filter.BloomKFilterHolder;
+import org.apache.druid.query.filter.BloomFilterHolder;
 import org.apache.druid.query.filter.DimFilter;
 import org.apache.druid.sql.calcite.expression.DruidExpression;
 import org.apache.druid.sql.calcite.expression.Expressions;
@@ -38,7 +38,7 @@ import org.apache.druid.sql.calcite.expression.OperatorConversions;
 import org.apache.druid.sql.calcite.expression.SqlOperatorConversion;
 import org.apache.druid.sql.calcite.planner.PlannerContext;
 import org.apache.druid.sql.calcite.table.RowSignature;
-import org.apache.hive.common.util.BloomKFilter;
+import org.apache.hive.common.util.BloomFilter;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -76,15 +76,15 @@ public class BloomFilterOperatorConversion implements SqlOperatorConversion
       return null;
     }
 
-    String base64EncodedBloomKFilter = RexLiteral.stringValue(operands.get(1));
-    byte[] bytes = StringUtils.toUtf8(base64EncodedBloomKFilter);
+    String base64EncodedBloomFilter = RexLiteral.stringValue(operands.get(1));
+    byte[] bytes = StringUtils.toUtf8(base64EncodedBloomFilter);
     byte[] decoded = Base64.decodeBase64(bytes);
     try {
-      BloomKFilter filter = BloomFilterSerializersModule.bloomKFilterFromBytes(decoded);
+      BloomFilter filter = BloomFilterSerializersModule.bloomFilterFromBytes(decoded);
 
       return new BloomDimFilter(
           druidExpression.getSimpleExtraction().getColumn(),
-          BloomKFilterHolder.fromBloomKFilter(filter),
+          BloomFilterHolder.fromBloomFilter(filter),
           druidExpression.getSimpleExtraction().getExtractionFn()
       );
 
