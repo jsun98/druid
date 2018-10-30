@@ -23,7 +23,7 @@ Internally, this implementation of bloom filter uses Murmur3 fast non-cryptograp
 {
   "type" : "bloom",
   "dimension" : <dimension_name>,
-  "bloomKFilter" : <serialized_bytes_for_BloomKFilter>,
+  "bloomFilter" : <serialized_bytes_for_BloomFilter>,
   "extractionFn" : <extraction_fn>
 }
 ```
@@ -32,23 +32,23 @@ Internally, this implementation of bloom filter uses Murmur3 fast non-cryptograp
 |-------------------------|------------------------------|----------------------------------|
 |`type`                   |Filter Type. Should always be `bloom`|yes|
 |`dimension`              |The dimension to filter over. | yes |
-|`bloomKFilter`           |Base64 encoded Binary representation of `org.apache.hive.common.util.BloomKFilter`| yes |
+|`bloomFilter`           |Base64 encoded Binary representation of `org.apache.hive.common.util.BloomFilter`| yes |
 |`extractionFn`|[Extraction function](./../dimensionspecs.html#extraction-functions) to apply to the dimension values |no|
 
 
-### Serialized Format for BloomKFilter
- Serialized BloomKFilter format:
+### Serialized Format for BloomFilter
+ Serialized BloomFilter format:
  - 1 byte for the number of hash functions.
  - 1 big endian int(That is how OutputStream works) for the number of longs in the bitset
- - big endian longs in the BloomKFilter bitset
+ - big endian longs in the BloomFilter bitset
      
-Note: `org.apache.hive.common.util.BloomKFilter` provides a serialize method which can be used to serialize bloom filters to outputStream.
+Note: `org.apache.hive.common.util.BloomFilter` provides a serialize method which can be used to serialize bloom filters to outputStream.
 
 ### SQL Queries
 Bloom filters are supported in SQL via the `bloom_filter_test` operator:
 
 ```sql
-SELECT COUNT(*) FROM druid.foo WHERE bloom_filter_test(dim1, '<serialized_bytes_for_BloomKFilter>')
+SELECT COUNT(*) FROM druid.foo WHERE bloom_filter_test(dim1, '<serialized_bytes_for_BloomFilter>')
 ```
 
 Very large filters may have poor performance during tokenization and parsing with calcite, to decrease query planning
@@ -60,7 +60,7 @@ of the query:
   "query": "SELECT COUNT(*) FROM druid.foo WHERE bloom_filter_test(dim1, context_literal_lookup('x'))",
   "context": {
     "sqlLiteralLookup": {
-      "x": <serialized_bytes_for_BloomKFilter>
+      "x": <serialized_bytes_for_BloomFilter>
     }
   }
 }
