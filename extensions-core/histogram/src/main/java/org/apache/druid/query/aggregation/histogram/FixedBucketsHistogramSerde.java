@@ -41,9 +41,7 @@ public class FixedBucketsHistogramSerde extends ComplexMetricSerde
   private static Ordering<FixedBucketsHistogram> comparator = new Ordering<FixedBucketsHistogram>()
   {
     @Override
-    public int compare(
-        FixedBucketsHistogram arg1, FixedBucketsHistogram arg2
-    )
+    public int compare(FixedBucketsHistogram arg1, FixedBucketsHistogram arg2)
     {
       return FixedBucketsHistogramAggregator.COMPARATOR.compare(arg1, arg2);
     }
@@ -138,9 +136,7 @@ public class FixedBucketsHistogramSerde extends ComplexMetricSerde
   }
 
   @Override
-  public GenericColumnSerializer getSerializer(
-      SegmentWriteOutMedium segmentWriteOutMedium, String column
-  )
+  public GenericColumnSerializer getSerializer(SegmentWriteOutMedium segmentWriteOutMedium, String column)
   {
     return LargeColumnSupportedComplexColumnSerializer.create(segmentWriteOutMedium, column, this.getObjectStrategy());
   }
