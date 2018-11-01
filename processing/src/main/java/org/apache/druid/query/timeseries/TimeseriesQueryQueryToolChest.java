@@ -98,7 +98,9 @@ public class TimeseriesQueryQueryToolChest extends QueryToolChest<Result<Timeser
   )
   {
     final QueryRunner<Result<TimeseriesResultValue>> resultMergeQueryRunner = new ResultMergeQueryRunner<Result<TimeseriesResultValue>>(
-        queryRunner)
+        queryRunner,
+        q -> createMergeFn((TimeseriesQuery) q)
+    )
     {
       @Override
       public Sequence<Result<TimeseriesResultValue>> doRun(
@@ -124,19 +126,7 @@ public class TimeseriesQueryQueryToolChest extends QueryToolChest<Result<Timeser
       protected Ordering<Result<TimeseriesResultValue>> makeOrdering(Query<Result<TimeseriesResultValue>> query)
       {
         return ResultGranularTimestampComparator.create(
-            ((TimeseriesQuery) query).getGranularity(), query.isDescending()
-        );
-      }
-
-      @Override
-      protected BinaryFn<Result<TimeseriesResultValue>, Result<TimeseriesResultValue>, Result<TimeseriesResultValue>> createMergeFn(
-          Query<Result<TimeseriesResultValue>> input
-      )
-      {
-        TimeseriesQuery query = (TimeseriesQuery) input;
-        return new TimeseriesBinaryFn(
-            query.getGranularity(),
-            query.getAggregatorSpecs()
+            query.getGranularity(), query.isDescending()
         );
       }
     };
@@ -208,6 +198,17 @@ public class TimeseriesQueryQueryToolChest extends QueryToolChest<Result<Timeser
         return finalSequence;
       }
     };
+  }
+
+  @Override
+  public BinaryFn<Result<TimeseriesResultValue>, Result<TimeseriesResultValue>, Result<TimeseriesResultValue>> createMergeFn(
+      TimeseriesQuery query
+  )
+  {
+    return new TimeseriesBinaryFn(
+        query.getGranularity(),
+        query.getAggregatorSpecs()
+    );
   }
 
   private Result<TimeseriesResultValue> getNullTimeseriesResultValue(TimeseriesQuery query)

@@ -51,8 +51,8 @@ import org.apache.druid.client.cache.CachePopulatorStats;
 import org.apache.druid.client.cache.ForegroundCachePopulator;
 import org.apache.druid.client.cache.MapCache;
 import org.apache.druid.client.selector.HighestPriorityTierSelectorStrategy;
-import org.apache.druid.client.selector.QueryableDruidServer;
 import org.apache.druid.client.selector.RandomServerSelectorStrategy;
+import org.apache.druid.client.selector.RemoteDruidServer;
 import org.apache.druid.client.selector.ServerSelector;
 import org.apache.druid.data.input.MapBasedRow;
 import org.apache.druid.data.input.Row;
@@ -63,6 +63,7 @@ import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.Intervals;
 import org.apache.druid.java.util.common.Pair;
 import org.apache.druid.java.util.common.StringUtils;
+import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.common.granularity.PeriodGranularity;
@@ -75,6 +76,7 @@ import org.apache.druid.java.util.common.guava.nary.TrinaryFn;
 import org.apache.druid.java.util.common.io.Closer;
 import org.apache.druid.query.BySegmentResultValueClass;
 import org.apache.druid.query.DataSource;
+import org.apache.druid.query.DruidProcessingConfig;
 import org.apache.druid.query.Druids;
 import org.apache.druid.query.FinalizeResultsQueryRunner;
 import org.apache.druid.query.Query;
@@ -281,14 +283,7 @@ public class CachingClusteredClientTest
   {
     return Lists.transform(
         Lists.newArrayList(new RangeIterable(RANDOMNESS)),
-        new Function<Integer, Object[]>()
-        {
-          @Override
-          public Object[] apply(Integer input)
-          {
-            return new Object[]{input};
-          }
-        }
+        input -> new Object[]{input}
     );
   }
 
@@ -570,7 +565,7 @@ public class CachingClusteredClientTest
         dataSegment,
         new HighestPriorityTierSelectorStrategy(new RandomServerSelectorStrategy())
     );
-    selector.addServerAndUpdateSegment(new QueryableDruidServer(lastServer, null), dataSegment);
+    selector.addServerAndUpdateSegment(new RemoteDruidServer(lastServer, null), dataSegment);
     timeline.add(interval, "v", new SingleElementPartitionChunk<>(selector));
 
     getDefaultQueryRunner().run(QueryPlus.wrap(query), context);
@@ -587,9 +582,11 @@ public class CachingClusteredClientTest
             .once();
     EasyMock.replay(cache);
     client = makeClient(new ForegroundCachePopulator(JSON_MAPPER, new CachePopulatorStats(), -1), cache, 0);
+
     getDefaultQueryRunner().run(QueryPlus.wrap(query), context);
     EasyMock.verify(cache);
     EasyMock.verify(dataSegment);
+
     Assert.assertTrue("Capture cache keys", cacheKeyCapture.hasCaptured());
     Assert.assertTrue("Cache Keys empty", ImmutableList.copyOf(cacheKeyCapture.getValue()).isEmpty());
   }
@@ -1175,14 +1172,14 @@ public class CachingClusteredClientTest
   public void testSearchCachingRenamedOutput()
   {
     final Druids.SearchQueryBuilder builder = Druids.newSearchQueryBuilder()
-        .dataSource(DATA_SOURCE)
-        .filters(DIM_FILTER)
-        .granularity(GRANULARITY)
-        .limit(1000)
-        .intervals(SEG_SPEC)
-        .dimensions(Collections.singletonList(TOP_DIM))
-        .query("how")
-        .context(CONTEXT);
+                                                    .dataSource(DATA_SOURCE)
+                                                    .filters(DIM_FILTER)
+                                                    .granularity(GRANULARITY)
+                                                    .limit(1000)
+                                                    .intervals(SEG_SPEC)
+                                                    .dimensions(Collections.singletonList(TOP_DIM))
+                                                    .query("how")
+                                                    .context(CONTEXT);
 
     testQueryCaching(
         getDefaultQueryRunner(),
@@ -1348,14 +1345,14 @@ public class CachingClusteredClientTest
     final Set<String> metrics = Sets.newHashSet("rows");
 
     Druids.SelectQueryBuilder builder = Druids.newSelectQueryBuilder()
-        .dataSource(DATA_SOURCE)
-        .intervals(SEG_SPEC)
-        .filters(DIM_FILTER)
-        .granularity(GRANULARITY)
-        .dimensions(Collections.singletonList("a"))
-        .metrics(Collections.singletonList("rows"))
-        .pagingSpec(new PagingSpec(null, 3))
-        .context(CONTEXT);
+                                              .dataSource(DATA_SOURCE)
+                                              .intervals(SEG_SPEC)
+                                              .filters(DIM_FILTER)
+                                              .granularity(GRANULARITY)
+                                              .dimensions(Collections.singletonList("a"))
+                                              .metrics(Collections.singletonList("rows"))
+                                              .pagingSpec(new PagingSpec(null, 3))
+                                              .context(CONTEXT);
 
     testQueryCaching(
         getDefaultQueryRunner(),
@@ -1447,9 +1444,9 @@ public class CachingClusteredClientTest
   public void testGroupByCaching()
   {
     List<AggregatorFactory> aggsWithUniques = ImmutableList.<AggregatorFactory>builder()
-                                                           .addAll(AGGS)
-                                                           .add(new HyperUniquesAggregatorFactory("uniques", "uniques"))
-                                                           .build();
+        .addAll(AGGS)
+        .add(new HyperUniquesAggregatorFactory("uniques", "uniques"))
+        .build();
 
     final HashFunction hashFn = Hashing.murmur3_128();
 
@@ -1651,9 +1648,11 @@ public class CachingClusteredClientTest
         makeTimeResults(DateTimes.of("2011-01-01"), 50, 5000,
                         DateTimes.of("2011-01-02"), 10, 1252,
                         DateTimes.of("2011-01-03"), 20, 6213,
-                        DateTimes.of("2011-01-04"), 30, 743),
+                        DateTimes.of("2011-01-04"), 30, 743
+        ),
         makeTimeResults(DateTimes.of("2011-01-07"), 60, 6020,
-                        DateTimes.of("2011-01-08"), 70, 250)
+                        DateTimes.of("2011-01-08"), 70, 250
+        )
     );
 
     testQueryCachingWithFilter(
@@ -1691,14 +1690,14 @@ public class CachingClusteredClientTest
     );
 
     final Druids.TimeseriesQueryBuilder builder = Druids.newTimeseriesQueryBuilder()
-                                                    .dataSource(DATA_SOURCE)
-                                                    .filters(filter)
-                                                    .granularity(GRANULARITY)
-                                                    .intervals(SEG_SPEC)
-                                                    .context(CONTEXT)
-                                                    .intervals("2011-01-05/2011-01-10")
-                                                    .aggregators(RENAMED_AGGS)
-                                                    .postAggregators(RENAMED_POST_AGGS);
+                                                        .dataSource(DATA_SOURCE)
+                                                        .filters(filter)
+                                                        .granularity(GRANULARITY)
+                                                        .intervals(SEG_SPEC)
+                                                        .context(CONTEXT)
+                                                        .intervals("2011-01-05/2011-01-10")
+                                                        .aggregators(RENAMED_AGGS)
+                                                        .postAggregators(RENAMED_POST_AGGS);
 
     TimeseriesQuery query = builder.build();
     Map<String, Object> context = new HashMap<>();
@@ -1771,7 +1770,7 @@ public class CachingClusteredClientTest
         segment,
         new HighestPriorityTierSelectorStrategy(new RandomServerSelectorStrategy())
     );
-    selector.addServerAndUpdateSegment(new QueryableDruidServer(server, null), segment);
+    selector.addServerAndUpdateSegment(new RemoteDruidServer(server, null), segment);
     return selector;
   }
 
@@ -1889,7 +1888,12 @@ public class CachingClusteredClientTest
                     @Override
                     public Sequence answer()
                     {
-                      return toFilteredQueryableTimeseriesResults((TimeseriesQuery) capture.getValue().getQuery(), segmentIds, queryIntervals, results);
+                      return toFilteredQueryableTimeseriesResults(
+                          (TimeseriesQuery) capture.getValue().getQuery(),
+                          segmentIds,
+                          queryIntervals,
+                          results
+                      );
                     }
                   })
                   .times(0, 1);
@@ -1947,7 +1951,11 @@ public class CachingClusteredClientTest
     MultipleSpecificSegmentSpec spec = (MultipleSpecificSegmentSpec) query.getQuerySegmentSpec();
     List<Result<TimeseriesResultValue>> ret = Lists.newArrayList();
     for (SegmentDescriptor descriptor : spec.getDescriptors()) {
-      String id = StringUtils.format("%s_%s", queryIntervals.indexOf(descriptor.getInterval()), descriptor.getPartitionNumber());
+      String id = StringUtils.format(
+          "%s_%s",
+          queryIntervals.indexOf(descriptor.getInterval()),
+          descriptor.getPartitionNumber()
+      );
       int index = segmentIds.indexOf(id);
       if (index != -1) {
         ret.add(new Result(
@@ -2013,8 +2021,8 @@ public class CachingClusteredClientTest
                 .andReturn(expectations.getQueryRunner())
                 .once();
 
-        final Capture<? extends QueryPlus> capture = new Capture();
-        final Capture<? extends Map> context = new Capture();
+        final Capture<? extends QueryPlus> capture = EasyMock.newCapture();
+        final Capture<? extends Map> context = EasyMock.newCapture();
         queryCaptures.add(capture);
         QueryRunner queryable = expectations.getQueryRunner();
 
@@ -2107,50 +2115,40 @@ public class CachingClusteredClientTest
       }
 
       runWithMocks(
-          new Runnable()
-          {
-            @Override
-            public void run()
-            {
-              HashMap<String, List> context = new HashMap<String, List>();
-              for (int i = 0; i < numTimesToQuery; ++i) {
-                TestHelper.assertExpectedResults(
-                    new MergeIterable<>(
-                        Comparators.naturalNullsFirst(),
-                        FunctionalIterable
-                            .create(new RangeIterable(expectedResultsRangeStart, expectedResultsRangeEnd))
-                            .transformCat(
-                                new Function<Integer, Iterable<Iterable<Result<Object>>>>()
-                                {
-                                  @Override
-                                  public Iterable<Iterable<Result<Object>>> apply(@Nullable Integer input)
-                                  {
-                                    List<Iterable<Result<Object>>> retVal = Lists.newArrayList();
+          () -> {
+            HashMap<String, List> context = new HashMap<>();
+            for (int i1 = 0; i1 < numTimesToQuery; ++i1) {
+              TestHelper.assertExpectedResults(
+                  new MergeIterable<>(
+                      Comparators.naturalNullsFirst(),
+                      FunctionalIterable
+                          .create(new RangeIterable(expectedResultsRangeStart, expectedResultsRangeEnd))
+                          .transformCat(
+                              (Function<Integer, Iterable<Iterable<Result<Object>>>>) input -> {
+                                List<Iterable<Result<Object>>> retVal = new ArrayList<>();
 
-                                    final Map<DruidServer, ServerExpectations> exps = serverExpectationList.get(input);
-                                    for (ServerExpectations expectations : exps.values()) {
-                                      for (ServerExpectation expectation : expectations) {
-                                        retVal.add(expectation.getResults());
-                                      }
-                                    }
-
-                                    return retVal;
+                                final Map<DruidServer, ServerExpectations> exps = serverExpectationList.get(input);
+                                for (ServerExpectations expectations : exps.values()) {
+                                  for (ServerExpectation expectation : expectations) {
+                                    retVal.add(expectation.getResults());
                                   }
                                 }
-                            )
-                    ),
-                    runner.run(
-                        QueryPlus.wrap(
-                            query.withQuerySegmentSpec(
-                                new MultipleIntervalSegmentSpec(ImmutableList.of(actualQueryInterval))
-                            )
-                        ),
-                        context
-                    )
-                );
-                if (queryCompletedCallback != null) {
-                  queryCompletedCallback.run();
-                }
+
+                                return retVal;
+                              }
+                          )
+                  ),
+                  runner.run(
+                      QueryPlus.wrap(
+                          query.withQuerySegmentSpec(
+                              new MultipleIntervalSegmentSpec(ImmutableList.of(actualQueryInterval))
+                          )
+                      ),
+                      context
+                  )
+              );
+              if (queryCompletedCallback != null) {
+                queryCompletedCallback.run();
               }
             }
           },
@@ -2207,7 +2205,7 @@ public class CachingClusteredClientTest
             expectation.getSegment(),
             new HighestPriorityTierSelectorStrategy(new RandomServerSelectorStrategy())
         );
-        selector.addServerAndUpdateSegment(new QueryableDruidServer(lastServer, null), selector.getSegment());
+        selector.addServerAndUpdateSegment(new RemoteDruidServer(lastServer, null), selector.getSegment());
 
         final ShardSpec shardSpec;
         if (numChunks == 1) {
@@ -2467,13 +2465,13 @@ public class CachingClusteredClientTest
               (DateTime) objects[i],
               new TimeseriesResultValue(
                   ImmutableMap.<String, Object>builder()
-                              .put("rows", objects[i + 1])
-                              .put("imps", objects[i + 2])
-                              .put("impers", objects[i + 2])
-                              .put("avg_imps_per_row", avg_impr)
-                              .put("avg_imps_per_row_half", avg_impr / 2)
-                              .put("avg_imps_per_row_double", avg_impr * 2)
-                              .build()
+                      .put("rows", objects[i + 1])
+                      .put("imps", objects[i + 2])
+                      .put("impers", objects[i + 2])
+                      .put("avg_imps_per_row", avg_impr)
+                      .put("avg_imps_per_row_half", avg_impr / 2)
+                      .put("avg_imps_per_row_double", avg_impr * 2)
+                      .build()
               )
           )
       );
@@ -2723,11 +2721,27 @@ public class CachingClusteredClientTest
             return mergeLimit;
           }
         },
-        new DruidHttpClientConfig() {
+        new DruidHttpClientConfig()
+        {
           @Override
           public long getMaxQueuedBytes()
           {
             return 0L;
+          }
+        },
+        Execs.multiThreaded(2, "parallel-merge-comine-sequence-test"),
+        new DruidProcessingConfig()
+        {
+          @Override
+          public String getFormatString()
+          {
+            return null;
+          }
+
+          @Override
+          public int getNumThreads()
+          {
+            return 2;
           }
         }
     );
@@ -3105,13 +3119,16 @@ public class CachingClusteredClientTest
         dataSegment,
         new HighestPriorityTierSelectorStrategy(new RandomServerSelectorStrategy())
     );
-    selector.addServerAndUpdateSegment(new QueryableDruidServer(servers[0], null), dataSegment);
+    selector.addServerAndUpdateSegment(new RemoteDruidServer(servers[0], null), dataSegment);
     timeline.add(interval, "ver", new SingleElementPartitionChunk<>(selector));
 
     TimeBoundaryQuery query = Druids.newTimeBoundaryQueryBuilder()
                                     .dataSource(DATA_SOURCE)
                                     .intervals(new MultipleIntervalSegmentSpec(ImmutableList.of(interval)))
-                                    .context(ImmutableMap.of("If-None-Match", "aVJV29CJY93rszVW/QBy0arWZo0="))
+                                    .context(ImmutableMap.of(
+                                        "If-None-Match",
+                                        "aVJV29CJY93rszVW/QBy0arWZo0="
+                                    ))
                                     .build();
 
 
@@ -3124,13 +3141,8 @@ public class CachingClusteredClientTest
   @SuppressWarnings("unchecked")
   private QueryRunner getDefaultQueryRunner()
   {
-    return new QueryRunner() {
-      @Override
-      public Sequence run(final QueryPlus queryPlus, final Map responseContext)
-      {
-        return client.getQueryRunnerForIntervals(queryPlus.getQuery(), queryPlus.getQuery().getIntervals())
-                     .run(queryPlus, responseContext);
-      }
-    };
+    return (queryPlus, responseContext) -> client
+        .getQueryRunnerForIntervals(queryPlus.getQuery(), queryPlus.getQuery().getIntervals())
+        .run(queryPlus, responseContext);
   }
 }
