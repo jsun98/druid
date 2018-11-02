@@ -414,14 +414,6 @@ public class SystemSchema extends AbstractSchema
         request,
         responseHandler
     );
-    if (responseHandler.getStatus() != HttpServletResponse.SC_OK) {
-      throw new RE(
-          "Unexpected response status [%s] description [%s] from request url [%s]",
-          responseHandler.getStatus(),
-          responseHandler.getDescription(),
-          request.getUrl()
-      );
-    }
     final JavaType typeRef = jsonMapper.getTypeFactory().constructType(new TypeReference<DataSegment>()
     {
     });
@@ -680,14 +672,6 @@ public class SystemSchema extends AbstractSchema
         request,
         responseHandler
     );
-    if (responseHandler.getStatus() != HttpServletResponse.SC_OK) {
-      throw new RE(
-          "Unexpected response status [%s] description [%s] from request url [%s]",
-          responseHandler.getStatus(),
-          responseHandler.getDescription(),
-          request.getUrl()
-      );
-    }
     final JavaType typeRef = jsonMapper.getTypeFactory().constructType(new TypeReference<TaskStatusPlus>()
     {
     });
