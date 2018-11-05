@@ -24,6 +24,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
@@ -86,6 +87,7 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   private static final long INITIAL_GET_OFFSET_DELAY_MILLIS = 15000;
   private static final long INITIAL_EMIT_LAG_METRIC_DELAY_MILLIS = 25000;
   private static final Long NOT_SET = -1L;
+  private static final Long END_OF_PARTITION = Long.MAX_VALUE;
 
   private final ServiceEmitter emitter;
   private final DruidMonitorSchedulerConfig monitorSchedulerConfig;
@@ -112,9 +114,8 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        NOT_SET,
-        Long.MAX_VALUE,
-        false
+        false,
+        true
     );
 
     this.spec = spec;
@@ -137,10 +138,10 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
     Preconditions.checkArgument(
         spec.getIoConfig()
             .getTopic()
-            .equals(((KafkaDataSourceMetadata) currentCheckPoint).getKafkaPartitions().getTopic()),
+            .equals(((KafkaDataSourceMetadata) currentCheckPoint).getSeekableStreamPartitions().getStream()),
         "Supervisor topic [%s] and topic in checkpoint [%s] does not match",
         spec.getIoConfig().getTopic(),
-        ((KafkaDataSourceMetadata) currentCheckPoint).getKafkaPartitions().getTopic()
+        ((KafkaDataSourceMetadata) currentCheckPoint).getSeekableStreamPartitions().getStream()
     );
 
     log.info("Checkpointing [%s] for taskGroup [%s]", currentCheckPoint, taskGroupId);
@@ -317,7 +318,8 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected KafkaDataSourceMetadata createDataSourceMetaData(
-      String topic, Map<Integer, Long> map
+      String topic,
+      Map<Integer, Long> map
   )
   {
     return new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, map));
@@ -325,7 +327,8 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected OrderedSequenceNumber<Long> makeSequenceNumber(
-      Long seq, boolean useExclusive, boolean isExclusive
+      Long seq,
+      boolean isExclusive
   )
   {
     return KafkaSequenceNumber.of(seq);
@@ -369,12 +372,25 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
 
   @Override
   protected boolean checkSequenceAvailability(
-      @NotNull Integer partition, @NotNull Long sequenceFromMetadata
+      @NotNull Integer partition,
+      @NotNull Long sequenceFromMetadata
   ) throws TimeoutException
   {
     Long latestOffset = getOffsetFromStreamForPartition(partition, false);
     return latestOffset != null
            && KafkaSequenceNumber.of(latestOffset).compareTo(KafkaSequenceNumber.of(sequenceFromMetadata)) >= 0;
+  }
+
+  @Override
+  protected Long getNotSetMarker()
+  {
+    return NOT_SET;
+  }
+
+  @Override
+  protected Long getEndOfPartitionMarker()
+  {
+    return END_OF_PARTITION;
   }
 
   // the following are for unit testing purposes only
@@ -434,5 +450,47 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   protected void tryInit()
   {
     super.tryInit();
+  }
+
+  @Override
+  @VisibleForTesting
+  protected void addTaskGroupToActivelyReadingTaskGroup(
+      int taskGroupId,
+      ImmutableMap<Integer, Long> partitionOffsets,
+      Optional<DateTime> minMsgTime,
+      Optional<DateTime> maxMsgTime,
+      Set<String> tasks,
+      Set<Integer> exclusiveStartingSequencePartitions
+  )
+  {
+    super.addTaskGroupToActivelyReadingTaskGroup(
+        taskGroupId,
+        partitionOffsets,
+        minMsgTime,
+        maxMsgTime,
+        tasks,
+        exclusiveStartingSequencePartitions
+    );
+  }
+
+  @Override
+  @VisibleForTesting
+  protected void addTaskGroupToPendingCompletionTaskGroup(
+      int taskGroupId,
+      ImmutableMap<Integer, Long> partitionOffsets,
+      Optional<DateTime> minMsgTime,
+      Optional<DateTime> maxMsgTime,
+      Set<String> tasks,
+      Set<Integer> exclusiveStartingSequencePartitions
+  )
+  {
+    super.addTaskGroupToPendingCompletionTaskGroup(
+        taskGroupId,
+        partitionOffsets,
+        minMsgTime,
+        maxMsgTime,
+        tasks,
+        exclusiveStartingSequencePartitions
+    );
   }
 }

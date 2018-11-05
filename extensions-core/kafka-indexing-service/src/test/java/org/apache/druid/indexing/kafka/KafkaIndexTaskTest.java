@@ -30,8 +30,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
 import com.google.common.io.Files;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -165,8 +163,10 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -190,7 +190,7 @@ public class KafkaIndexTaskTest
   private static ListeningExecutorService taskExec;
   private static int topicPostfix;
 
-  private final List<Task> runningTasks = Lists.newArrayList();
+  private final List<Task> runningTasks = new ArrayList<>();
 
   private long handoffConditionTimeout = 0;
   private boolean reportParseExceptions = false;
@@ -211,7 +211,7 @@ public class KafkaIndexTaskTest
   private String topic;
   private List<ProducerRecord<byte[], byte[]>> records;
   private final boolean isIncrementalHandoffSupported;
-  private final Set<Integer> checkpointRequestsHash = Sets.newHashSet();
+  private final Set<Integer> checkpointRequestsHash = new HashSet<>();
   private File reportsFile;
   private RowIngestionMetersFactory rowIngestionMetersFactory;
 
@@ -548,8 +548,8 @@ public class KafkaIndexTaskTest
       Thread.sleep(10);
     }
     final Map<Integer, Long> currentOffsets = ImmutableMap.copyOf(task.getRunner().getCurrentOffsets());
-    Assert.assertTrue(checkpoint1.getPartitionOffsetMap().equals(currentOffsets) || checkpoint2.getPartitionOffsetMap()
-                                                                                               .equals(currentOffsets));
+    Assert.assertTrue(checkpoint1.getPartitionSequenceNumberMap().equals(currentOffsets) || checkpoint2.getPartitionSequenceNumberMap()
+                                                                                                       .equals(currentOffsets));
     task.getRunner().setEndOffsets(currentOffsets, false);
     Assert.assertEquals(TaskState.SUCCESS, future.get().getStatusCode());
 
@@ -675,7 +675,7 @@ public class KafkaIndexTaskTest
       }
       final Map<Integer, Long> currentOffsets = ImmutableMap.copyOf(task.getRunner().getCurrentOffsets());
 
-      Assert.assertTrue(checkpoint1.getPartitionOffsetMap().equals(currentOffsets));
+      Assert.assertTrue(checkpoint1.getPartitionSequenceNumberMap().equals(currentOffsets));
       task.getRunner().setEndOffsets(currentOffsets, false);
 
       while (task.getRunner().getStatus() != SeekableStreamIndexTask.Status.PAUSED) {
@@ -688,7 +688,7 @@ public class KafkaIndexTaskTest
       }
       final Map<Integer, Long> nextOffsets = ImmutableMap.copyOf(task.getRunner().getCurrentOffsets());
 
-      Assert.assertTrue(checkpoint2.getPartitionOffsetMap().equals(nextOffsets));
+      Assert.assertTrue(checkpoint2.getPartitionSequenceNumberMap().equals(nextOffsets));
       task.getRunner().setEndOffsets(nextOffsets, false);
 
       Assert.assertEquals(TaskState.SUCCESS, future.get().getStatusCode());
@@ -816,7 +816,7 @@ public class KafkaIndexTaskTest
       Thread.sleep(10);
     }
     final Map<Integer, Long> currentOffsets = ImmutableMap.copyOf(task.getRunner().getCurrentOffsets());
-    Assert.assertTrue(checkpoint.getPartitionOffsetMap().equals(currentOffsets));
+    Assert.assertTrue(checkpoint.getPartitionSequenceNumberMap().equals(currentOffsets));
     task.getRunner().setEndOffsets(currentOffsets, false);
     Assert.assertEquals(TaskState.SUCCESS, future.get().getStatusCode());
 
@@ -827,7 +827,7 @@ public class KafkaIndexTaskTest
                 DATA_SCHEMA.getDataSource(),
                 0,
                 new KafkaDataSourceMetadata(startPartitions),
-                new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, checkpoint.getPartitionOffsetMap()))
+                new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(topic, checkpoint.getPartitionSequenceNumberMap()))
             )
         )
     );
@@ -2192,9 +2192,7 @@ public class KafkaIndexTaskTest
     )
     {
       @Override
-      public <T> QueryRunner<T> decorate(
-          QueryRunner<T> delegate, QueryToolChest<T, ? extends Query<T>> toolChest
-      )
+      public <T> QueryRunner<T> decorate(QueryRunner<T> delegate, QueryToolChest<T, ? extends Query<T>> toolChest)
       {
         return delegate;
       }
@@ -2294,7 +2292,9 @@ public class KafkaIndexTaskTest
     {
       @Override
       public boolean registerSegmentHandoffCallback(
-          SegmentDescriptor descriptor, Executor exec, Runnable handOffRunnable
+          SegmentDescriptor descriptor,
+          Executor exec,
+          Runnable handOffRunnable
       )
       {
         if (doHandoff) {
@@ -2324,7 +2324,7 @@ public class KafkaIndexTaskTest
       @Override
       public List<StorageLocationConfig> getLocations()
       {
-        return Lists.newArrayList();
+        return new ArrayList<>();
       }
     };
     toolboxFactory = new TaskToolboxFactory(
@@ -2426,7 +2426,7 @@ public class KafkaIndexTaskTest
     QueryableIndex index = indexIO.loadIndex(outputLocation);
     DictionaryEncodedColumn<String> theColumn = (DictionaryEncodedColumn<String>) index.getColumnHolder(column)
                                                                                        .getColumn();
-    List<String> values = Lists.newArrayList();
+    List<String> values = new ArrayList<>();
     for (int i = 0; i < theColumn.length(); i++) {
       int id = theColumn.getSingleValueRow(i);
       String value = theColumn.lookupName(id);

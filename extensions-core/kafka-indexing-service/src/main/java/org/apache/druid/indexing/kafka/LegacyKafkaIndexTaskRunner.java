@@ -25,8 +25,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import org.apache.druid.data.input.Committer;
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.data.input.impl.InputRowParser;
@@ -193,7 +191,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
     this.savedParseExceptions = savedParseExceptions;
     this.rowIngestionMeters = rowIngestionMetersFactory.createRowIngestionMeters();
 
-    this.endOffsets.putAll(ioConfig.getEndPartitions().getPartitionOffsetMap());
+    this.endOffsets.putAll(ioConfig.getEndPartitions().getPartitionSequenceNumberMap());
     this.ingestionState = IngestionState.NOT_STARTED;
   }
 
@@ -277,12 +275,12 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
 
       appenderator = appenderator0;
 
-      final String topic = ioConfig.getStartPartitions().getTopic();
+      final String topic = ioConfig.getStartPartitions().getStream();
 
       // Start up, set up initial offsets.
       final Object restoredMetadata = driver.startJob();
       if (restoredMetadata == null) {
-        nextOffsets.putAll(ioConfig.getStartPartitions().getPartitionOffsetMap());
+        nextOffsets.putAll(ioConfig.getStartPartitions().getPartitionSequenceNumberMap());
       } else {
         final Map<String, Object> restoredMetadataMap = (Map) restoredMetadata;
         final SeekableStreamPartitions<Integer, Long> restoredNextPartitions = toolbox.getObjectMapper().convertValue(
@@ -294,28 +292,28 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
                 Long.class
             )
         );
-        nextOffsets.putAll(restoredNextPartitions.getPartitionOffsetMap());
+        nextOffsets.putAll(restoredNextPartitions.getPartitionSequenceNumberMap());
 
         // Sanity checks.
-        if (!restoredNextPartitions.getTopic().equals(ioConfig.getStartPartitions().getTopic())) {
+        if (!restoredNextPartitions.getStream().equals(ioConfig.getStartPartitions().getStream())) {
           throw new ISE(
               "WTF?! Restored topic[%s] but expected topic[%s]",
-              restoredNextPartitions.getTopic(),
-              ioConfig.getStartPartitions().getTopic()
+              restoredNextPartitions.getStream(),
+              ioConfig.getStartPartitions().getStream()
           );
         }
 
-        if (!nextOffsets.keySet().equals(ioConfig.getStartPartitions().getPartitionOffsetMap().keySet())) {
+        if (!nextOffsets.keySet().equals(ioConfig.getStartPartitions().getPartitionSequenceNumberMap().keySet())) {
           throw new ISE(
               "WTF?! Restored partitions[%s] but expected partitions[%s]",
               nextOffsets.keySet(),
-              ioConfig.getStartPartitions().getPartitionOffsetMap().keySet()
+              ioConfig.getStartPartitions().getPartitionSequenceNumberMap().keySet()
           );
         }
       }
 
       // Set up sequenceNames.
-      final Map<Integer, String> sequenceNames = Maps.newHashMap();
+      final Map<Integer, String> sequenceNames = new HashMap<>();
       for (Integer partitionNum : nextOffsets.keySet()) {
         sequenceNames.put(partitionNum, StringUtils.format("%s_%s", ioConfig.getBaseSequenceName(), partitionNum));
       }
@@ -335,7 +333,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
             {
               return ImmutableMap.of(
                   METADATA_NEXT_PARTITIONS, new SeekableStreamPartitions<>(
-                      ioConfig.getStartPartitions().getTopic(),
+                      ioConfig.getStartPartitions().getStream(),
                       snapshot
                   )
               );
@@ -515,7 +513,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
         );
 
         // Sanity check, we should only be publishing things that match our desired end state.
-        if (!endOffsets.equals(finalPartitions.getPartitionOffsetMap())) {
+        if (!endOffsets.equals(finalPartitions.getPartitionSequenceNumberMap())) {
           throw new ISE("WTF?! Driver attempted to publish invalid metadata[%s].", commitMetadata);
         }
 
@@ -614,7 +612,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
   private Set<Integer> assignPartitionsAndSeekToNext(KafkaConsumer consumer, String topic)
   {
     // Initialize consumer assignment.
-    final Set<Integer> assignment = Sets.newHashSet();
+    final Set<Integer> assignment = new HashSet<>();
     for (Map.Entry<Integer, Long> entry : nextOffsets.entrySet()) {
       final long endOffset = endOffsets.get(entry.getKey());
       if (entry.getValue() < endOffset) {
@@ -682,7 +680,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
       TaskToolbox taskToolbox
   ) throws InterruptedException, IOException
   {
-    final Map<TopicPartition, Long> resetPartitions = Maps.newHashMap();
+    final Map<TopicPartition, Long> resetPartitions = new HashMap<>();
     boolean doReset = false;
     if (tuningConfig.isResetOffsetAutomatically()) {
       for (Map.Entry<TopicPartition, Long> outOfRangePartition : outOfRangePartitions.entrySet()) {
@@ -723,7 +721,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
   private void sendResetRequestAndWait(Map<TopicPartition, Long> outOfRangePartitions, TaskToolbox taskToolbox)
       throws IOException
   {
-    Map<Integer, Long> partitionOffsetMap = Maps.newHashMap();
+    Map<Integer, Long> partitionOffsetMap = new HashMap<>();
     for (Map.Entry<TopicPartition, Long> outOfRangePartition : outOfRangePartitions.entrySet()) {
       partitionOffsetMap.put(outOfRangePartition.getKey().partition(), outOfRangePartition.getValue());
     }
@@ -732,7 +730,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
                                     task.getDataSource(),
                                     new KafkaDataSourceMetadata(new SeekableStreamPartitions<>(
                                         ioConfig.getStartPartitions()
-                                                .getTopic(),
+                                                .getStream(),
                                         partitionOffsetMap
                                     ))
                                 ));
@@ -798,7 +796,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
 
   private Map<String, Object> getTaskCompletionUnparseableEvents()
   {
-    Map<String, Object> unparseableEventsMap = Maps.newHashMap();
+    Map<String, Object> unparseableEventsMap = new HashMap<>();
     List<String> buildSegmentsParseExceptionMessages = IndexTaskUtils.getMessagesFromSavedParseExceptions(
         savedParseExceptions
     );
@@ -810,7 +808,7 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
 
   private Map<String, Object> getTaskCompletionRowStats()
   {
-    Map<String, Object> metrics = Maps.newHashMap();
+    Map<String, Object> metrics = new HashMap<>();
     metrics.put(
         RowIngestionMeters.BUILD_SEGMENTS,
         rowIngestionMeters.getTotals()
@@ -957,9 +955,9 @@ public class LegacyKafkaIndexTaskRunner implements SeekableStreamIndexTaskRunner
   )
   {
     authorizationCheck(req, Action.READ);
-    Map<String, Object> returnMap = Maps.newHashMap();
-    Map<String, Object> totalsMap = Maps.newHashMap();
-    Map<String, Object> averagesMap = Maps.newHashMap();
+    Map<String, Object> returnMap = new HashMap<>();
+    Map<String, Object> totalsMap = new HashMap<>();
+    Map<String, Object> averagesMap = new HashMap<>();
 
     totalsMap.put(
         RowIngestionMeters.BUILD_SEGMENTS,

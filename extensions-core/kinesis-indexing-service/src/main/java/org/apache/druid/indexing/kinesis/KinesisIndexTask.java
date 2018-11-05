@@ -30,8 +30,6 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import org.apache.druid.data.input.Committer;
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.discovery.DiscoveryDruidNode;
@@ -215,7 +213,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
     this.ingestionState = IngestionState.NOT_STARTED;
     this.ioConfig = ioConfig;
     this.tuningConfig = tuningConfig;
-    this.endOffsets.putAll(ioConfig.getEndPartitions().getMap());
+    this.endOffsets.putAll(ioConfig.getEndPartitions().getPartitionSequenceNumberMap());
   }
 
   @Override
@@ -269,13 +267,19 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
 
       appenderator = appenderator0;
 
-      final String topic = ioConfig.getStartPartitions().getName();
+      final String topic = ioConfig.getStartPartitions().getStream();
 
       // Start up, set up initial offsets.
       final Object restoredMetadata = driver.startJob();
       if (restoredMetadata == null) {
-        lastOffsets.putAll(ioConfig.getStartPartitions().getMap());
+        log.info(
+            "no restored metadata found for [%s], using starting sequences[%s] from ioConfig",
+            topic,
+            ioConfig.getStartPartitions()
+        );
+        lastOffsets.putAll(ioConfig.getStartPartitions().getPartitionSequenceNumberMap());
       } else {
+        log.info("found meatadata [%s] for [%s]", restoredMetadata, topic);
         @SuppressWarnings("unchecked")
         final Map<String, Object> restoredMetadataMap = (Map) restoredMetadata;
         final SeekableStreamPartitions<String, String> restoredNextPartitions = toolbox
@@ -289,22 +293,22 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
                     String.class
                 )
             );
-        lastOffsets.putAll(restoredNextPartitions.getMap());
+        lastOffsets.putAll(restoredNextPartitions.getPartitionSequenceNumberMap());
 
         // Sanity checks.
-        if (!restoredNextPartitions.getName().equals(ioConfig.getStartPartitions().getName())) {
+        if (!restoredNextPartitions.getStream().equals(ioConfig.getStartPartitions().getStream())) {
           throw new ISE(
               "WTF?! Restored stream[%s] but expected stream[%s]",
-              restoredNextPartitions.getName(),
-              ioConfig.getStartPartitions().getName()
+              restoredNextPartitions.getStream(),
+              ioConfig.getStartPartitions().getStream()
           );
         }
 
-        if (!lastOffsets.keySet().equals(ioConfig.getStartPartitions().getMap().keySet())) {
+        if (!lastOffsets.keySet().equals(ioConfig.getStartPartitions().getPartitionSequenceNumberMap().keySet())) {
           throw new ISE(
               "WTF?! Restored partitions[%s] but expected partitions[%s]",
               lastOffsets.keySet(),
-              ioConfig.getStartPartitions().getMap().keySet()
+              ioConfig.getStartPartitions().getPartitionSequenceNumberMap().keySet()
           );
         }
       }
@@ -320,7 +324,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
       }
 
       // Set up sequenceNames.
-      final Map<String, String> sequenceNames = Maps.newHashMap();
+      final Map<String, String> sequenceNames = new HashMap<>();
       for (String partitionNum : lastOffsets.keySet()) {
         sequenceNames.put(partitionNum, StringUtils.format("%s_%s", ioConfig.getBaseSequenceName(), partitionNum));
       }
@@ -336,7 +340,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
           {
             return ImmutableMap.of(
                 METADATA_NEXT_PARTITIONS, new SeekableStreamPartitions<>(
-                    ioConfig.getStartPartitions().getName(),
+                    ioConfig.getStartPartitions().getStream(),
                     snapshot
                 )
             );
@@ -376,133 +380,139 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
             break;
           }
 
-          OrderedPartitionableRecord<String, String> record = recordSupplier.poll(POLL_TIMEOUT);
+          List<OrderedPartitionableRecord<String, String>> records = recordSupplier.poll(POLL_TIMEOUT);
 
-          if (record == null) {
+          if (records.size() == 0) {
             continue;
           }
 
-          // for the first message we receive, check that we were given a message with a sequenceNumber that matches our
-          // expected starting sequenceNumber
-          if (!verifiedAllStartingOffsets && contiguousOffsetCheck.containsKey(record.getPartitionId())) {
-            if (!contiguousOffsetCheck.get(record.getPartitionId()).equals(record.getSequenceNumber())) {
-              throw new ISE(
-                  "Starting sequenceNumber [%s] does not match expected [%s] for partition [%s]",
-                  record.getSequenceNumber(),
-                  contiguousOffsetCheck.get(record.getPartitionId()),
-                  record.getPartitionId()
+          for (OrderedPartitionableRecord<String, String> record : records) {
+
+            // for the first message we receive, check that we were given a message with a sequenceNumber that matches our
+            // expected starting sequenceNumber
+            if (!verifiedAllStartingOffsets && contiguousOffsetCheck.containsKey(record.getPartitionId())) {
+              if (!contiguousOffsetCheck.get(record.getPartitionId()).equals(record.getSequenceNumber())) {
+                throw new ISE(
+                    "Starting sequenceNumber [%s] does not match expected [%s] for partition [%s]",
+                    record.getSequenceNumber(),
+                    contiguousOffsetCheck.get(record.getPartitionId()),
+                    record.getPartitionId()
+                );
+              }
+
+              log.info(
+                  "Verified starting sequenceNumber [%s] for partition [%s]",
+                  record.getSequenceNumber(), record.getPartitionId()
+              );
+
+              contiguousOffsetCheck.remove(record.getPartitionId());
+              if (contiguousOffsetCheck.isEmpty()) {
+                verifiedAllStartingOffsets = true;
+                log.info("Verified starting offsets for all partitions");
+              }
+
+              if (ioConfig.getExclusiveStartSequenceNumberPartitions() != null
+                  && ioConfig.getExclusiveStartSequenceNumberPartitions().contains(record.getPartitionId())) {
+                log.info(
+                    "Skipping starting sequenceNumber for partition [%s] marked exclusive",
+                    record.getPartitionId()
+                );
+
+                continue;
+              }
+            }
+
+            if (log.isTraceEnabled()) {
+              log.trace(
+                  "Got topic[%s] partition[%s] offset[%s].",
+                  record.getStream(),
+                  record.getPartitionId(),
+                  record.getSequenceNumber()
               );
             }
 
-            log.info(
-                "Verified starting sequenceNumber [%s] for partition [%s]",
-                record.getSequenceNumber(), record.getPartitionId()
-            );
+            if (OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(record.getSequenceNumber())) {
+              lastOffsets.put(record.getPartitionId(), record.getSequenceNumber());
 
-            contiguousOffsetCheck.remove(record.getPartitionId());
-            if (contiguousOffsetCheck.isEmpty()) {
-              verifiedAllStartingOffsets = true;
-              log.info("Verified starting offsets for all partitions");
-            }
+            } else if (SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER.equals(endOffsets.get(record.getPartitionId()))
+                       || record.getSequenceNumber().compareTo(endOffsets.get(record.getPartitionId())) <= 0) {
 
-            if (ioConfig.getExclusiveStartSequenceNumberPartitions() != null
-                && ioConfig.getExclusiveStartSequenceNumberPartitions().contains(record.getPartitionId())) {
-              log.info("Skipping starting sequenceNumber for partition [%s] marked exclusive", record.getPartitionId());
+              try {
+                final List<byte[]> valueBytess = record.getData();
 
-              continue;
-            }
-          }
-
-          if (log.isTraceEnabled()) {
-            log.trace(
-                "Got topic[%s] partition[%s] offset[%s].",
-                record.getStream(),
-                record.getPartitionId(),
-                record.getSequenceNumber()
-            );
-          }
-
-          if (OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(record.getSequenceNumber())) {
-            lastOffsets.put(record.getPartitionId(), record.getSequenceNumber());
-
-          } else if (SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER.equals(endOffsets.get(record.getPartitionId()))
-                     || record.getSequenceNumber().compareTo(endOffsets.get(record.getPartitionId())) <= 0) {
-
-            try {
-              final List<byte[]> valueBytess = record.getData();
-
-              final List<InputRow> rows;
-              if (valueBytess == null || valueBytess.isEmpty()) {
-                rows = Utils.nullableListOf((InputRow) null);
-              } else {
-                rows = new ArrayList<>();
-                for (byte[] valueBytes : valueBytess) {
-                  rows.addAll(parser.parseBatch(ByteBuffer.wrap(valueBytes)));
-                }
-              }
-
-              boolean isPersistRequired = false;
-              final Map<String, Set<SegmentIdentifier>> segmentsToMoveOut = new HashMap<>();
-
-              for (final InputRow row : rows) {
-                if (row != null && withinMinMaxRecordTime(row)) {
-                  final String sequenceName = sequenceNames.get(record.getPartitionId());
-                  final AppenderatorDriverAddResult addResult = driver.add(
-                      row,
-                      sequenceName,
-                      committerSupplier,
-                      false,
-                      false
-                  );
-
-                  if (addResult.isOk()) {
-                    // If the number of rows in the segment exceeds the threshold after adding a row,
-                    // move the segment out from the active segments of BaseAppenderatorDriver to make a new segment.
-                    if (addResult.getNumRowsInSegment() > tuningConfig.getMaxRowsPerSegment()) {
-                      segmentsToMoveOut.computeIfAbsent(sequenceName, k -> new HashSet<>())
-                                       .add(addResult.getSegmentIdentifier());
-                    }
-                    isPersistRequired |= addResult.isPersistRequired();
-                  } else {
-                    // Failure to allocate segment puts determinism at risk, bail out to be safe.
-                    // May want configurable behavior here at some point.
-                    // If we allow continuing, then consider blacklisting the interval for a while to avoid constant checks.
-                    throw new ISE("Could not allocate segment for row with timestamp[%s]", row.getTimestamp());
-                  }
-
-                  if (addResult.getParseException() != null) {
-                    handleParseException(addResult.getParseException(), record);
-                  } else {
-                    rowIngestionMeters.incrementProcessed();
-                  }
+                final List<InputRow> rows;
+                if (valueBytess == null || valueBytess.isEmpty()) {
+                  rows = Utils.nullableListOf((InputRow) null);
                 } else {
-                  rowIngestionMeters.incrementThrownAway();
+                  rows = new ArrayList<>();
+                  for (byte[] valueBytes : valueBytess) {
+                    rows.addAll(parser.parseBatch(ByteBuffer.wrap(valueBytes)));
+                  }
                 }
+
+                boolean isPersistRequired = false;
+                final Map<String, Set<SegmentIdentifier>> segmentsToMoveOut = new HashMap<>();
+
+                for (final InputRow row : rows) {
+                  if (row != null && withinMinMaxRecordTime(row)) {
+                    final String sequenceName = sequenceNames.get(record.getPartitionId());
+                    final AppenderatorDriverAddResult addResult = driver.add(
+                        row,
+                        sequenceName,
+                        committerSupplier,
+                        false,
+                        false
+                    );
+
+                    if (addResult.isOk()) {
+                      // If the number of rows in the segment exceeds the threshold after adding a row,
+                      // move the segment out from the active segments of BaseAppenderatorDriver to make a new segment.
+                      if (addResult.getNumRowsInSegment() > tuningConfig.getMaxRowsPerSegment()) {
+                        segmentsToMoveOut.computeIfAbsent(sequenceName, k -> new HashSet<>())
+                                         .add(addResult.getSegmentIdentifier());
+                      }
+                      isPersistRequired |= addResult.isPersistRequired();
+                    } else {
+                      // Failure to allocate segment puts determinism at risk, bail out to be safe.
+                      // May want configurable behavior here at some point.
+                      // If we allow continuing, then consider blacklisting the interval for a while to avoid constant checks.
+                      throw new ISE("Could not allocate segment for row with timestamp[%s]", row.getTimestamp());
+                    }
+
+                    if (addResult.getParseException() != null) {
+                      handleParseException(addResult.getParseException(), record);
+                    } else {
+                      rowIngestionMeters.incrementProcessed();
+                    }
+                  } else {
+                    rowIngestionMeters.incrementThrownAway();
+                  }
+                }
+
+                if (isPersistRequired) {
+                  driver.persist(committerSupplier.get());
+                }
+                segmentsToMoveOut.forEach((key, value) -> driver.moveSegmentOut(
+                    key,
+                    new ArrayList<SegmentIdentifier>(value)
+                ));
+              }
+              catch (ParseException e) {
+                handleParseException(e, record);
               }
 
-              if (isPersistRequired) {
-                driver.persist(committerSupplier.get());
-              }
-              segmentsToMoveOut.forEach((key, value) -> driver.moveSegmentOut(
-                  key,
-                  new ArrayList<SegmentIdentifier>(value)
-              ));
+              lastOffsets.put(record.getPartitionId(), record.getSequenceNumber());
+
+
             }
-            catch (ParseException e) {
-              handleParseException(e, record);
+            if ((lastOffsets.get(record.getPartitionId()).equals(endOffsets.get(record.getPartitionId()))
+                 || OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(lastOffsets.get(record.getPartitionId())))
+                && assignment.remove(record.getPartitionId())) {
+
+              log.info("Finished reading stream[%s], partition[%s].", record.getStream(), record.getPartitionId());
+              assignPartitions(recordSupplier, topic, assignment);
+              stillReading = !assignment.isEmpty();
             }
-
-            lastOffsets.put(record.getPartitionId(), record.getSequenceNumber());
-
-
-          }
-          if ((lastOffsets.get(record.getPartitionId()).equals(endOffsets.get(record.getPartitionId()))
-               || OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(lastOffsets.get(record.getPartitionId())))
-              && assignment.remove(record.getPartitionId())) {
-
-            log.info("Finished reading stream[%s], partition[%s].", record.getStream(), record.getPartitionId());
-            assignPartitions(recordSupplier, topic, assignment);
-            stillReading = !assignment.isEmpty();
           }
         }
       }
@@ -540,8 +550,12 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
         );
 
         // Sanity check, we should only be publishing things that match our desired end state.
-        if (!endOffsets.equals(finalPartitions.getMap())) {
-          throw new ISE("WTF?! Driver attempted to publish invalid metadata[%s].", commitMetadata);
+        if (!endOffsets.equals(finalPartitions.getPartitionSequenceNumberMap())) {
+          throw new ISE(
+              "WTF?! Driver attempted to publish invalid metadata[%s], final sequences are [%s]",
+              commitMetadata,
+              endOffsets
+          );
         }
 
         final SegmentTransactionalInsertAction action;
@@ -632,7 +646,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
   {
     int fetchThreads = tuningConfig.getFetchThreads() != null
                        ? tuningConfig.getFetchThreads()
-                       : Math.max(1, ioConfig.getStartPartitions().getMap().size());
+                       : Math.max(1, ioConfig.getStartPartitions().getPartitionSequenceNumberMap().size());
 
     return new KinesisRecordSupplier(
         ioConfig.getEndpoint(),
@@ -654,7 +668,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
   private Appenderator newAppenderator(FireDepartmentMetrics metrics, TaskToolbox toolbox)
   {
     final int maxRowsInMemoryPerPartition = (tuningConfig.getMaxRowsInMemory() /
-                                             ioConfig.getStartPartitions().getMap().size());
+                                             ioConfig.getStartPartitions().getPartitionSequenceNumberMap().size());
     return Appenderators.createRealtime(
         dataSchema,
         tuningConfig.withBasePersistDirectory(toolbox.getPersistDir()),
@@ -705,7 +719,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
   private Set<String> assignPartitions(RecordSupplier<String, String> recordSupplier, String topic)
   {
     // Initialize consumer assignment.
-    final Set<String> assignment = Sets.newHashSet();
+    final Set<String> assignment = new HashSet<>();
     for (Map.Entry<String, String> entry : lastOffsets.entrySet()) {
       final String endOffset = endOffsets.get(entry.getKey());
       if (OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(endOffset)
@@ -806,27 +820,13 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
         pauseRequested = true;
       }
       */
-
       if (pauseRequested) {
         status = Status.PAUSED;
-        long nanos = 0;
         hasPaused.signalAll();
 
         while (pauseRequested) {
-          if (pauseMillis == PAUSE_FOREVER) {
-            log.info("Pausing ingestion until resumed");
-            shouldResume.await();
-          } else {
-            if (pauseMillis > 0) {
-              log.info("Pausing ingestion for [%,d] ms", pauseMillis);
-              nanos = TimeUnit.MILLISECONDS.toNanos(pauseMillis);
-              pauseMillis = 0;
-            }
-            if (nanos <= 0L) {
-              pauseRequested = false; // timeout elapsed
-            }
-            nanos = shouldResume.awaitNanos(nanos);
-          }
+          log.info("Pausing ingestion until resumed");
+          shouldResume.await();
         }
 
         status = Status.READING;
@@ -945,7 +945,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
                 getDataSource(),
                 new KinesisDataSourceMetadata(
                     new SeekableStreamPartitions<>(
-                        ioConfig.getStartPartitions().getName(),
+                        ioConfig.getStartPartitions().getStream(),
                         partitionOffsetMap
                     )
                 )
@@ -970,7 +970,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
 
   private Map<String, Object> getTaskCompletionUnparseableEvents()
   {
-    Map<String, Object> unparseableEventsMap = Maps.newHashMap();
+    Map<String, Object> unparseableEventsMap = new HashMap<>();
     List<String> buildSegmentsParseExceptionMessages = IndexTaskUtils.getMessagesFromSavedParseExceptions(
         savedParseExceptions
     );
@@ -982,7 +982,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
 
   private Map<String, Object> getTaskCompletionRowStats()
   {
-    Map<String, Object> metrics = Maps.newHashMap();
+    Map<String, Object> metrics = new HashMap<>();
     metrics.put(
         RowIngestionMeters.BUILD_SEGMENTS,
         rowIngestionMeters.getTotals()
@@ -1237,9 +1237,7 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
       pauseLock.unlock();
     }
 
-    if (resume) {
-      resume();
-    }
+    resume();
 
     return Response.ok(endOffsets).build();
   }
@@ -1310,9 +1308,9 @@ public class KinesisIndexTask extends SeekableStreamIndexTask<String, String>
   )
   {
     authorizationCheck(req, Action.READ);
-    Map<String, Object> returnMap = Maps.newHashMap();
-    Map<String, Object> totalsMap = Maps.newHashMap();
-    Map<String, Object> averagesMap = Maps.newHashMap();
+    Map<String, Object> returnMap = new HashMap<>();
+    Map<String, Object> totalsMap = new HashMap<>();
+    Map<String, Object> averagesMap = new HashMap<>();
 
     totalsMap.put(
         RowIngestionMeters.BUILD_SEGMENTS,

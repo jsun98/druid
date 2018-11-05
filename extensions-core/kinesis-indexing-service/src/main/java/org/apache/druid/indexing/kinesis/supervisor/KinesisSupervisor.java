@@ -23,6 +23,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.Task;
@@ -43,8 +44,8 @@ import org.apache.druid.indexing.seekablestream.SeekableStreamIOConfig;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.indexing.seekablestream.SeekableStreamTuningConfig;
-import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.OrderedSequenceNumber;
+import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervisor;
 import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervisorIOConfig;
 import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervisorReportPayload;
@@ -96,9 +97,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        NOT_SET,
-        SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER,
-        true
+        true,
+        false
     );
 
     this.spec = spec;
@@ -240,7 +240,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected SeekableStreamSupervisorReportPayload<String, String> createReportPayload(
-      int numPartitions, boolean includeOffsets
+      int numPartitions,
+      boolean includeOffsets
   )
   {
     KinesisSupervisorIOConfig ioConfig = spec.getIoConfig();
@@ -263,7 +264,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected SeekableStreamDataSourceMetadata<String, String> createDataSourceMetaData(
-      String stream, Map<String, String> map
+      String stream,
+      Map<String, String> map
   )
   {
     return new KinesisDataSourceMetadata(
@@ -273,10 +275,11 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
 
   @Override
   protected OrderedSequenceNumber<String> makeSequenceNumber(
-      String seq, boolean useExclusive, boolean isExclusive
+      String seq,
+      boolean isExclusive
   )
   {
-    return KinesisSequenceNumber.of(seq, useExclusive, isExclusive);
+    return KinesisSequenceNumber.of(seq, isExclusive);
   }
 
   // the following are for unit testing purposes only
@@ -332,6 +335,59 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
            && KinesisSequenceNumber.of(earliestSequence).compareTo(KinesisSequenceNumber.of(sequenceFromMetadata)) <= 0;
   }
 
+  @Override
+  protected String getNotSetMarker()
+  {
+    return NOT_SET;
+  }
+
+  @Override
+  protected String getEndOfPartitionMarker()
+  {
+    return SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER;
+  }
+
+  @Override
+  @VisibleForTesting
+  protected void addTaskGroupToActivelyReadingTaskGroup(
+      int taskGroupId,
+      ImmutableMap<String, String> partitionOffsets,
+      Optional<DateTime> minMsgTime,
+      Optional<DateTime> maxMsgTime,
+      Set<String> tasks,
+      Set<String> exclusiveStartingSequencePartitions
+  )
+  {
+    super.addTaskGroupToActivelyReadingTaskGroup(
+        taskGroupId,
+        partitionOffsets,
+        minMsgTime,
+        maxMsgTime,
+        tasks,
+        exclusiveStartingSequencePartitions
+    );
+  }
+
+  @Override
+  @VisibleForTesting
+  protected void addTaskGroupToPendingCompletionTaskGroup(
+      int taskGroupId,
+      ImmutableMap<String, String> partitionOffsets,
+      Optional<DateTime> minMsgTime,
+      Optional<DateTime> maxMsgTime,
+      Set<String> tasks,
+      Set<String> exclusiveStartingSequencePartitions
+  )
+  {
+    super.addTaskGroupToPendingCompletionTaskGroup(
+        taskGroupId,
+        partitionOffsets,
+        minMsgTime,
+        maxMsgTime,
+        tasks,
+        exclusiveStartingSequencePartitions
+    );
+  }
 
 // Implement this for Kinesis which uses approximate time from latest instead of offset lag
 /*
@@ -344,19 +400,19 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
       {
         try {
           final Map<String, List<PartitionInfo>> topics = lagComputingConsumer.listTopics();
-          final List<PartitionInfo> partitionInfoList = topics.get(ioConfig.getName());
+          final List<PartitionInfo> partitionInfoList = topics.get(ioConfig.getStream());
           lagComputingConsumer.assign(
               Lists.transform(partitionInfoList, new Function<PartitionInfo, TopicPartition>()
               {
                 @Override
                 public TopicPartition apply(PartitionInfo input)
                 {
-                  return new TopicPartition(ioConfig.getName(), input.partition());
+                  return new TopicPartition(ioConfig.getStream(), input.partition());
                 }
               })
           );
           final Map<Integer, Long> offsetsResponse = new ConcurrentHashMap<>();
-          final List<ListenableFuture<Void>> futures = Lists.newArrayList();
+          final List<ListenableFuture<Void>> futures = new ArrayList<>();
           for (TaskGroup taskGroup : taskGroups.values()) {
             for (String taskId : taskGroup.taskIds()) {
               futures.add(Futures.transform(
@@ -401,7 +457,7 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
           long lag = 0;
           for (PartitionInfo partitionInfo : partitionInfoList) {
             long diff;
-            final TopicPartition topicPartition = new TopicPartition(ioConfig.getName(), partitionInfo.partition());
+            final TopicPartition topicPartition = new TopicPartition(ioConfig.getStream(), partitionInfo.partition());
             lagComputingConsumer.seekToEnd(ImmutableList.of(topicPartition));
             if (offsetsResponse.get(topicPartition.partition()) != null) {
               diff = lagComputingConsumer.position(topicPartition) - offsetsResponse.get(topicPartition.partition());

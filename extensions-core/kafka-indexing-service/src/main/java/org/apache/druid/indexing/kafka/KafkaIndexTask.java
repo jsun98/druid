@@ -24,7 +24,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Lists;
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.indexing.appenderator.ActionBasedSegmentAllocator;
@@ -33,7 +32,6 @@ import org.apache.druid.indexing.common.TaskToolbox;
 import org.apache.druid.indexing.common.actions.SegmentAllocateAction;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.TaskResource;
-import org.apache.druid.indexing.kafka.supervisor.KafkaSupervisorIOConfig;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
 import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervisor;
@@ -41,7 +39,6 @@ import org.apache.druid.java.util.common.Intervals;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.parsers.ParseException;
 import org.apache.druid.java.util.emitter.EmittingLogger;
-import org.apache.druid.metadata.PasswordProvider;
 import org.apache.druid.query.NoopQueryRunner;
 import org.apache.druid.query.Query;
 import org.apache.druid.query.QueryRunner;
@@ -56,6 +53,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -215,7 +213,11 @@ public class KafkaIndexTask extends SeekableStreamIndexTask<Integer, Long>
 
       final Properties props = new Properties();
 
-      addConsumerPropertiesFromConfig(props, configMapper, ((KafkaIOConfig) ioConfig).getConsumerProperties());
+      KafkaRecordSupplier.addConsumerPropertiesFromConfig(
+          props,
+          configMapper,
+          ((KafkaIOConfig) ioConfig).getConsumerProperties()
+      );
 
       props.setProperty("enable.auto.commit", "false");
       props.setProperty("auto.offset.reset", "none");
@@ -229,29 +231,6 @@ public class KafkaIndexTask extends SeekableStreamIndexTask<Integer, Long>
     }
   }
 
-  public static void addConsumerPropertiesFromConfig(
-      Properties properties,
-      ObjectMapper configMapper,
-      Map<String, Object> consumerProperties
-  )
-  {
-    // Extract passwords before SSL connection to Kafka
-    for (Map.Entry<String, Object> entry : consumerProperties.entrySet()) {
-      String propertyKey = entry.getKey();
-      if (propertyKey.equals(KafkaSupervisorIOConfig.TRUST_STORE_PASSWORD_KEY)
-          || propertyKey.equals(KafkaSupervisorIOConfig.KEY_STORE_PASSWORD_KEY)
-          || propertyKey.equals(KafkaSupervisorIOConfig.KEY_PASSWORD_KEY)) {
-        PasswordProvider configPasswordProvider = configMapper.convertValue(
-            entry.getValue(),
-            PasswordProvider.class
-        );
-        properties.setProperty(propertyKey, configPasswordProvider.getPassword());
-      } else {
-        properties.setProperty(propertyKey, String.valueOf(entry.getValue()));
-      }
-    }
-  }
-
 
   static void assignPartitions(
       final KafkaConsumer consumer,
@@ -260,7 +239,7 @@ public class KafkaIndexTask extends SeekableStreamIndexTask<Integer, Long>
   )
   {
     consumer.assign(
-        Lists.newArrayList(
+        new ArrayList<>(
             partitions.stream().map(n -> new TopicPartition(topic, n)).collect(Collectors.toList())
         )
     );
