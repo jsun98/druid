@@ -165,6 +165,7 @@ public class KinesisTuningConfigTest
         1,
         (long) 3,
         2,
+        100L,
         new Period("PT3S"),
         new File("/tmp/xxx"),
         4,
@@ -189,6 +190,7 @@ public class KinesisTuningConfigTest
     Assert.assertEquals(1, copy.getMaxRowsInMemory());
     Assert.assertEquals(3, copy.getMaxBytesInMemory());
     Assert.assertEquals(2, copy.getMaxRowsPerSegment());
+    Assert.assertEquals(100L, (long) copy.getMaxTotalRows());
     Assert.assertEquals(new Period("PT3S"), copy.getIntermediatePersistPeriod());
     Assert.assertEquals(new File("/tmp/xxx"), copy.getBasePersistDirectory());
     Assert.assertEquals(0, copy.getMaxPendingPersists());

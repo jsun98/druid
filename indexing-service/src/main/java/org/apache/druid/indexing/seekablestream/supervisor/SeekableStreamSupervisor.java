@@ -60,6 +60,7 @@ import org.apache.druid.indexing.seekablestream.SeekableStreamIOConfig;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskClient;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskClientFactory;
+import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
 import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.indexing.seekablestream.SeekableStreamTuningConfig;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
@@ -145,7 +146,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
    * indexing tasks. All the tasks in a TaskGroup should always be doing the same thing (reading the same partitions and
    * starting from the same sequences) and if [replicas] is configured to be 1, a TaskGroup will contain a single task (the
    * exception being if the supervisor started up and discovered and adopted some already running tasks). At any given
-   * time, there should only be up to a maximum of [taskCount] actively-reading task groups (tracked in the [taskGroups]
+   * time, there should only be up to a maximum of [taskCount] actively-reading task groups (tracked in the [activelyReadingTaskGroups]
    * map) + zero or more pending-completion task groups (tracked in [pendingCompletionTaskGroups]).
    */
   private class TaskGroup
@@ -341,12 +342,12 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       // Find taskGroupId using taskId if it's null. It can be null while rolling update.
       final int taskGroupId;
       if (nullableTaskGroupId == null) {
-        // We search taskId in taskGroups and pendingCompletionTaskGroups sequentially. This should be fine because
-        // 1) a taskGroup can be moved from taskGroups to pendingCompletionTaskGroups in RunNotice
+        // We search taskId in activelyReadingTaskGroups and pendingCompletionTaskGroups sequentially. This should be fine because
+        // 1) a taskGroup can be moved from activelyReadingTaskGroups to pendingCompletionTaskGroups in RunNotice
         //    (see checkTaskDuration()).
         // 2) Notices are proceesed by a single thread. So, CheckpointNotice and RunNotice cannot be processed at the
         //    same time.
-        final java.util.Optional<Integer> maybeGroupId = taskGroups
+        final java.util.Optional<Integer> maybeGroupId = activelyReadingTaskGroups
             .entrySet()
             .stream()
             .filter(entry -> {
@@ -373,7 +374,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
       // check for consistency
       // if already received request for this sequenceName and dataSourceMetadata combination then return
-      final TaskGroup taskGroup = taskGroups.get(taskGroupId);
+      final TaskGroup taskGroup = activelyReadingTaskGroups.get(taskGroupId);
 
       if (isValidTaskGroup(taskGroupId, taskGroup)) {
         final TreeMap<Integer, Map<PartitionType, SequenceType>> checkpoints = taskGroup.checkpointSequences;
@@ -420,7 +421,9 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
           log.warn("Ignoring checkpoint request because taskGroup[%d] is inactive", taskGroupId);
           return false;
         } else {
-          throw new ISE("WTH?! cannot find taskGroup [%s] among all taskGroups [%s]", taskGroupId, taskGroups);
+          throw new ISE("WTH?! cannot find taskGroup [%s] among all activelyReadingTaskGroups [%s]", taskGroupId,
+                        activelyReadingTaskGroups
+          );
         }
       }
 
@@ -430,9 +433,9 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
 
   // Map<{group ID}, {actively reading task group}>; see documentation for TaskGroup class
-  private final ConcurrentHashMap<Integer, TaskGroup> taskGroups = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Integer, TaskGroup> activelyReadingTaskGroups = new ConcurrentHashMap<>();
 
-  // After telling a taskGroup to stop reading and begin publishing a segment, it is moved from [taskGroups] to here so
+  // After telling a taskGroup to stop reading and begin publishing a segment, it is moved from [activelyReadingTaskGroups] to here so
   // we can monitor its status while we queue new tasks to read the next range of offsets. This is a list since we could
   // have multiple sets of tasks publishing at once if time-to-publish > taskDuration.
   // Map<{group ID}, List<{pending completion task groups}>>
@@ -480,7 +483,6 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   private final Object recordSupplierLock = new Object();
 
   private final boolean useExclusiveStartingSequence;
-  private final boolean isCheckpointSupported;
   private boolean listenerRegistered = false;
   private long lastRunTime;
   private int initRetryCounter = 0;
@@ -500,8 +502,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       final ObjectMapper mapper,
       final SeekableStreamSupervisorSpec spec,
       final RowIngestionMetersFactory rowIngestionMetersFactory,
-      final boolean useExclusiveStartingSequence,
-      final boolean isCheckpointSupported
+      final boolean useExclusiveStartingSequence
   )
   {
     this.taskStorage = taskStorage;
@@ -511,7 +512,6 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     this.spec = spec;
     this.rowIngestionMetersFactory = rowIngestionMetersFactory;
     this.useExclusiveStartingSequence = useExclusiveStartingSequence;
-    this.isCheckpointSupported = isCheckpointSupported;
 
     this.dataSource = spec.getDataSchema().getDataSource();
     this.ioConfig = spec.getIoConfig();
@@ -819,7 +819,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     List<TaskReportData<PartitionType, SequenceType>> taskReports = new ArrayList<>();
 
     try {
-      for (TaskGroup taskGroup : taskGroups.values()) {
+      for (TaskGroup taskGroup : activelyReadingTaskGroups.values()) {
         for (Entry<String, TaskData> entry : taskGroup.tasks.entrySet()) {
           String taskId = entry.getKey();
           @Nullable
@@ -916,8 +916,8 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     final List<ListenableFuture<StatsFromTaskResult>> futures = new ArrayList<>();
     final List<Pair<Integer, String>> groupAndTaskIds = new ArrayList<>();
 
-    for (int groupId : taskGroups.keySet()) {
-      TaskGroup group = taskGroups.get(groupId);
+    for (int groupId : activelyReadingTaskGroups.keySet()) {
+      TaskGroup group = activelyReadingTaskGroups.get(groupId);
       for (String taskId : group.taskIds()) {
         futures.add(
             Futures.transform(
@@ -987,7 +987,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
         exclusiveStartingSequencePartitions
     );
     group.tasks.putAll(tasks.stream().collect(Collectors.toMap(x -> x, x -> new TaskData())));
-    if (taskGroups.putIfAbsent(taskGroupId, group) != null) {
+    if (activelyReadingTaskGroups.putIfAbsent(taskGroupId, group) != null) {
       throw new ISE(
           "trying to add taskGroup with ID [%s] to actively reading task groups, but group already exists.",
           taskGroupId
@@ -1087,7 +1087,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   @VisibleForTesting
   protected void gracefulShutdownInternal() throws ExecutionException, InterruptedException, TimeoutException
   {
-    for (TaskGroup taskGroup : taskGroups.values()) {
+    for (TaskGroup taskGroup : activelyReadingTaskGroups.values()) {
       for (Entry<String, TaskData> entry :
           taskGroup.tasks.entrySet()) {
         if (taskInfoProvider.getTaskLocation(entry.getKey()).equals(TaskLocation.unknown())) {
@@ -1108,8 +1108,8 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       // Reset everything
       boolean result = indexerMetadataStorageCoordinator.deleteDataSourceMetadata(dataSource);
       log.info("Reset dataSource[%s] - dataSource metadata entry deleted? [%s]", dataSource, result);
-      taskGroups.values().forEach(this::killTasksInGroup);
-      taskGroups.clear();
+      activelyReadingTaskGroups.values().forEach(this::killTasksInGroup);
+      activelyReadingTaskGroups.clear();
       partitionGroups.clear();
     } else {
 
@@ -1147,7 +1147,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
                                                               : currentMetadata.getSeekableStreamPartitions()
                                                                                .getPartitionSequenceNumberMap()
                                                                                .get(resetPartitionOffset.getKey());
-          final TaskGroup partitionTaskGroup = taskGroups.get(
+          final TaskGroup partitionTaskGroup = activelyReadingTaskGroups.get(
               getTaskGroupIdForPartition(resetPartitionOffset.getKey())
           );
           final boolean isSameOffset = partitionTaskGroup != null
@@ -1181,7 +1181,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
           resetMetadata.getSeekableStreamPartitions().getPartitionSequenceNumberMap().keySet().forEach(partition -> {
             final int groupId = getTaskGroupIdForPartition(partition);
             killTaskGroupForPartitions(ImmutableSet.of(partition));
-            taskGroups.remove(groupId);
+            activelyReadingTaskGroups.remove(groupId);
             partitionGroups.get(groupId).replaceAll((partitionId, offset) -> getNotSetMarker());
           });
         } else {
@@ -1223,9 +1223,9 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   {
     for (PartitionType partition : partitions) {
       int taskGroupId = getTaskGroupIdForPartition(partition);
-      killTasksInGroup(taskGroups.get(taskGroupId));
+      killTasksInGroup(activelyReadingTaskGroups.get(taskGroupId));
       partitionGroups.remove(taskGroupId);
-      taskGroups.remove(taskGroupId);
+      activelyReadingTaskGroups.remove(taskGroupId);
     }
   }
 
@@ -1274,22 +1274,22 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       final Integer taskGroupId = (it.hasNext() ? getTaskGroupIdForPartition(it.next()) : null);
 
       if (taskGroupId != null) {
-        // check to see if we already know about this task, either in [taskGroups] or in [pendingCompletionTaskGroups]
-        // and if not add it to taskGroups or pendingCompletionTaskGroups (if status = PUBLISHING)
-        TaskGroup taskGroup = taskGroups.get(taskGroupId);
+        // check to see if we already know about this task, either in [activelyReadingTaskGroups] or in [pendingCompletionTaskGroups]
+        // and if not add it to activelyReadingTaskGroups or pendingCompletionTaskGroups (if status = PUBLISHING)
+        TaskGroup taskGroup = activelyReadingTaskGroups.get(taskGroupId);
 
         if (!isTaskInPendingCompletionGroups(taskId) && (taskGroup == null || !taskGroup.tasks.containsKey(taskId))) {
           futureTaskIds.add(taskId);
           futures.add(
               Futures.transform(
-                  taskClient.getStatusAsync(taskId), new Function<SeekableStreamIndexTask.Status, Boolean>()
+                  taskClient.getStatusAsync(taskId), new Function<SeekableStreamIndexTaskRunner.Status, Boolean>()
                   {
                     @Override
-                    public Boolean apply(SeekableStreamIndexTask.Status status)
+                    public Boolean apply(SeekableStreamIndexTaskRunner.Status status)
                     {
                       try {
                         log.debug("Task [%s], status [%s]", taskId, status);
-                        if (status == SeekableStreamIndexTask.Status.PUBLISHING) {
+                        if (status == SeekableStreamIndexTaskRunner.Status.PUBLISHING) {
                           seekableStreamIndexTask.getIOConfig()
                                                  .getStartPartitions()
                                                  .getPartitionSequenceNumberMap()
@@ -1358,7 +1358,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
                             }
                             return false;
                           } else {
-                            final TaskGroup taskGroup = taskGroups.computeIfAbsent(
+                            final TaskGroup taskGroup = activelyReadingTaskGroups.computeIfAbsent(
                                 taskGroupId,
                                 k -> {
                                   log.info("Creating a new task group for taskGroupId[%d]", taskGroupId);
@@ -1413,9 +1413,8 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     log.debug("Found [%d] seekablestream indexing tasks for dataSource [%s]", taskCount, dataSource);
 
     // make sure the checkpoints are consistent with each other and with the metadata store
-    if (isCheckpointSupported) {
-      verifyAndMergeCheckpoints(taskGroupsToVerify.values());
-    }
+
+    verifyAndMergeCheckpoints(taskGroupsToVerify.values());
 
   }
 
@@ -1578,7 +1577,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       // killing all tasks or no task left in the group ?
       // clear state about the taskgroup so that get latest offset information is fetched from metadata store
       log.warn("Clearing task group [%d] information as no valid tasks left the group", groupId);
-      taskGroups.remove(groupId);
+      activelyReadingTaskGroups.remove(groupId);
       partitionGroups.get(groupId).replaceAll((partition, offset) -> getNotSetMarker());
     }
 
@@ -1666,9 +1665,9 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
         .get();
 
     String taskSequenceName = task.getIOConfig().getBaseSequenceName();
-    if (taskGroups.get(taskGroupId) != null) {
+    if (activelyReadingTaskGroups.get(taskGroupId) != null) {
       return Preconditions
-          .checkNotNull(taskGroups.get(taskGroupId), "null taskGroup for taskId[%s]", taskGroupId)
+          .checkNotNull(activelyReadingTaskGroups.get(taskGroupId), "null taskGroup for taskId[%s]", taskGroupId)
           .baseSequenceName
           .equals(taskSequenceName);
     } else {
@@ -1779,8 +1778,8 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     final List<ListenableFuture<Boolean>> futures = new ArrayList<>();
     final List<String> futureTaskIds = new ArrayList<>();
 
-    // update status (and startTime if unknown) of current tasks in taskGroups
-    for (TaskGroup group : taskGroups.values()) {
+    // update status (and startTime if unknown) of current tasks in activelyReadingTaskGroups
+    for (TaskGroup group : activelyReadingTaskGroups.values()) {
       for (Entry<String, TaskData> entry : group.tasks.entrySet()) {
         final String taskId = entry.getKey();
         final TaskData taskData = entry.getValue();
@@ -1846,7 +1845,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
     final List<ListenableFuture<Map<PartitionType, SequenceType>>> futures = new ArrayList<>();
     final List<Integer> futureGroupIds = new ArrayList<>();
 
-    for (Entry<Integer, TaskGroup> entry : taskGroups.entrySet()) {
+    for (Entry<Integer, TaskGroup> entry : activelyReadingTaskGroups.entrySet()) {
       Integer groupId = entry.getKey();
       TaskGroup group = entry.getValue();
 
@@ -1879,7 +1878,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
                                                             .get(futureTimeoutInSeconds, TimeUnit.SECONDS);
     for (int j = 0; j < results.size(); j++) {
       Integer groupId = futureGroupIds.get(j);
-      TaskGroup group = taskGroups.get(groupId);
+      TaskGroup group = activelyReadingTaskGroups.get(groupId);
       Map<PartitionType, SequenceType> endOffsets = results.get(j);
 
       if (endOffsets != null) {
@@ -1906,7 +1905,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       }
 
       // remove this task group from the list of current task groups now that it has been handled
-      taskGroups.remove(groupId);
+      activelyReadingTaskGroups.remove(groupId);
     }
   }
 
@@ -2143,7 +2142,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
           stopTasksInTaskGroup = true;
 
           // kill all the tasks in the currently reading task group and remove the bad task group
-          killTasksInGroup(taskGroups.remove(groupId));
+          killTasksInGroup(activelyReadingTaskGroups.remove(groupId));
           toRemove.add(group);
         }
       }
@@ -2158,7 +2157,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   private void checkCurrentTaskState() throws ExecutionException, InterruptedException, TimeoutException
   {
     List<ListenableFuture<?>> futures = new ArrayList<>();
-    Iterator<Entry<Integer, TaskGroup>> iTaskGroups = taskGroups.entrySet().iterator();
+    Iterator<Entry<Integer, TaskGroup>> iTaskGroups = activelyReadingTaskGroups.entrySet().iterator();
     while (iTaskGroups.hasNext()) {
       Entry<Integer, TaskGroup> taskGroupEntry = iTaskGroups.next();
       Integer groupId = taskGroupEntry.getKey();
@@ -2166,7 +2165,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
       // Iterate the list of known tasks in this group and:
       //   1) Kill any tasks which are not "current" (have the partitions, starting offsets, and minimumMessageTime
-      //      & maximumMessageTime (if applicable) in [taskGroups])
+      //      & maximumMessageTime (if applicable) in [activelyReadingTaskGroups])
       //   2) Remove any tasks that have failed from the list
       //   3) If any task completed successfully, stop all the tasks in this group and move to the next group
 
@@ -2212,18 +2211,16 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   private void createNewTasks() throws JsonProcessingException
   {
     // update the checkpoints in the taskGroup to latest ones so that new tasks do not read what is already published
-    if (isCheckpointSupported) {
-      verifyAndMergeCheckpoints(
-          taskGroups.values()
-                    .stream()
-                    .filter(taskGroup -> taskGroup.tasks.size() < ioConfig.getReplicas())
-                    .collect(Collectors.toList())
-      );
-    }
+    verifyAndMergeCheckpoints(
+        activelyReadingTaskGroups.values()
+                                 .stream()
+                                 .filter(taskGroup -> taskGroup.tasks.size() < ioConfig.getReplicas())
+                                 .collect(Collectors.toList())
+    );
 
     // check that there is a current task group for each group of partitions in [partitionGroups]
     for (Integer groupId : partitionGroups.keySet()) {
-      if (!taskGroups.containsKey(groupId)) {
+      if (!activelyReadingTaskGroups.containsKey(groupId)) {
         log.info("Creating new task group [%d] for partitions %s", groupId, partitionGroups.get(groupId).keySet());
 
         Optional<DateTime> minimumMessageTime = (ioConfig.getLateMessageRejectionPeriod().isPresent() ? Optional.of(
@@ -2257,7 +2254,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
                                                                           .map(Entry::getKey)
                                                                           .collect(Collectors.toSet());
 
-          taskGroups.put(
+          activelyReadingTaskGroups.put(
               groupId,
               new TaskGroup(
                   groupId,
@@ -2279,7 +2276,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
     // iterate through all the current task groups and make sure each one has the desired number of replica tasks
     boolean createdTask = false;
-    for (Entry<Integer, TaskGroup> entry : taskGroups.entrySet()) {
+    for (Entry<Integer, TaskGroup> entry : activelyReadingTaskGroups.entrySet()) {
       TaskGroup taskGroup = entry.getValue();
       Integer groupId = entry.getKey();
 
@@ -2316,13 +2313,13 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   @Nullable
   protected TaskGroup removeTaskGroup(int taskGroupId)
   {
-    return taskGroups.remove(taskGroupId);
+    return activelyReadingTaskGroups.remove(taskGroupId);
   }
 
   @VisibleForTesting
   protected void moveTaskGroupToPendingCompletion(int taskGroupId)
   {
-    final TaskGroup taskGroup = taskGroups.remove(taskGroupId);
+    final TaskGroup taskGroup = activelyReadingTaskGroups.remove(taskGroupId);
     if (taskGroup != null) {
       pendingCompletionTaskGroups.computeIfAbsent(taskGroupId, k -> new CopyOnWriteArrayList<>()).add(taskGroup);
     }
@@ -2458,16 +2455,16 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
   private void createTasksForGroup(int groupId, int replicas) throws JsonProcessingException
   {
-    TaskGroup group = taskGroups.get(groupId);
+    TaskGroup group = activelyReadingTaskGroups.get(groupId);
     Map<PartitionType, SequenceType> startPartitions = group.startingSequences;
     Map<PartitionType, SequenceType> endPartitions = new HashMap<>();
     for (PartitionType partition : startPartitions.keySet()) {
       endPartitions.put(partition, getEndOfPartitionMarker());
     }
-    Set<PartitionType> exclusiveStartSequenceNumberPartitions = taskGroups.get(groupId).exclusiveStartSequenceNumberPartitions;
+    Set<PartitionType> exclusiveStartSequenceNumberPartitions = activelyReadingTaskGroups.get(groupId).exclusiveStartSequenceNumberPartitions;
 
-    DateTime minimumMessageTime = taskGroups.get(groupId).minimumMessageTime.orNull();
-    DateTime maximumMessageTime = taskGroups.get(groupId).maximumMessageTime.orNull();
+    DateTime minimumMessageTime = activelyReadingTaskGroups.get(groupId).minimumMessageTime.orNull();
+    DateTime maximumMessageTime = activelyReadingTaskGroups.get(groupId).maximumMessageTime.orNull();
 
     SeekableStreamIOConfig newIoConfig = createIoConfig(
         groupId,
@@ -2525,7 +2522,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
   private void updateCurrentOffsets() throws InterruptedException, ExecutionException, TimeoutException
   {
     final List<ListenableFuture<Void>> futures = Stream.concat(
-        taskGroups.values().stream().flatMap(taskGroup -> taskGroup.tasks.entrySet().stream()),
+        activelyReadingTaskGroups.values().stream().flatMap(taskGroup -> taskGroup.tasks.entrySet().stream()),
         pendingCompletionTaskGroups.values()
                                    .stream()
                                    .flatMap(List::stream)
@@ -2578,7 +2575,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
 
   protected Map<PartitionType, SequenceType> getHighestCurrentOffsets()
   {
-    return taskGroups
+    return activelyReadingTaskGroups
         .values()
         .stream()
         .flatMap(taskGroup -> taskGroup.tasks.entrySet().stream())

@@ -114,8 +114,7 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        false,
-        true
+        false
     );
 
     this.spec = spec;

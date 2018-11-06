@@ -97,8 +97,7 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        true,
-        false
+        true
     );
 
     this.spec = spec;
