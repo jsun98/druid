@@ -39,8 +39,9 @@ import java.util.concurrent.TimeoutException;
 public interface RecordSupplier<PartitionType, SequenceType> extends Closeable
 {
   /**
-   * assigns the given parittions to this RecordSupplier. Previously
-   * assigned partitions will be replaced
+   * assigns the given parittions to this RecordSupplier
+   * and seek to the earliest sequence number. Previously
+   * assigned partitions will be replaced.
    *
    * @param partitions parititions to assign
    */
