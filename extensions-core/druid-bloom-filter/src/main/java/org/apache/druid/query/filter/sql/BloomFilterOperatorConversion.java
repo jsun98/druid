@@ -30,7 +30,8 @@ import org.apache.commons.codec.binary.Base64;
 import org.apache.druid.guice.BloomFilterSerializersModule;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.query.filter.BloomDimFilter;
-import org.apache.druid.query.filter.BloomFilterHolder;
+import org.apache.druid.query.filter.BloomKFilter;
+import org.apache.druid.query.filter.BloomKFilterHolder;
 import org.apache.druid.query.filter.DimFilter;
 import org.apache.druid.sql.calcite.expression.DruidExpression;
 import org.apache.druid.sql.calcite.expression.Expressions;
@@ -38,7 +39,6 @@ import org.apache.druid.sql.calcite.expression.OperatorConversions;
 import org.apache.druid.sql.calcite.expression.SqlOperatorConversion;
 import org.apache.druid.sql.calcite.planner.PlannerContext;
 import org.apache.druid.sql.calcite.table.RowSignature;
-import org.apache.hive.common.util.BloomFilter;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -80,12 +80,14 @@ public class BloomFilterOperatorConversion implements SqlOperatorConversion
     byte[] bytes = StringUtils.toUtf8(base64EncodedBloomFilter);
     byte[] decoded = Base64.decodeBase64(bytes);
     try {
-      BloomFilter filter = BloomFilterSerializersModule.bloomFilterFromBytes(decoded);
+      BloomKFilter filter = BloomFilterSerializersModule.bloomKFilterFromBytes(decoded);
 
+      // todo: control skipIndex
       return new BloomDimFilter(
           druidExpression.getSimpleExtraction().getColumn(),
-          BloomFilterHolder.fromBloomFilter(filter),
-          druidExpression.getSimpleExtraction().getExtractionFn()
+          BloomKFilterHolder.fromBloomKFilter(filter),
+          druidExpression.getSimpleExtraction().getExtractionFn(),
+          true
       );
 
     }
