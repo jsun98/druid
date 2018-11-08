@@ -74,7 +74,7 @@ public class KinesisIOConfig extends SeekableStreamIOConfig<String, String>
         useTransaction,
         minimumMessageTime,
         maximumMessageTime,
-        false
+        true
     );
     Preconditions.checkArgument(endPartitions.getPartitionOffsetMap()
                                              .values()

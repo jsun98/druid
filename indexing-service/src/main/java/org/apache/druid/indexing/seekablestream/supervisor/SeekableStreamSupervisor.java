@@ -2567,7 +2567,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       latestSequenceFromStream = partitions.stream()
                                            .collect(Collectors.toMap(
                                                StreamPartition::getPartitionId,
-                                               x -> recordSupplier.position(x)
+                                               x -> recordSupplier.getPosition(x)
                                            ));
     }
 

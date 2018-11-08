@@ -81,12 +81,6 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
   }
 
   @Override
-  public void seekAfter(StreamPartition<Integer> partition, Long sequenceNumber)
-  {
-    seek(partition, sequenceNumber + 1);
-  }
-
-  @Override
   public void seekToEarliest(Set<StreamPartition<Integer>> partitions)
   {
     consumer.seekToBeginning(partitions
@@ -151,7 +145,7 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
   }
 
   @Override
-  public Long position(StreamPartition<Integer> partition)
+  public Long getPosition(StreamPartition<Integer> partition)
   {
     return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
   }

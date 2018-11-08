@@ -56,14 +56,6 @@ public interface RecordSupplier<PartitionType, SequenceType> extends Closeable
   void seek(StreamPartition<PartitionType> partition, SequenceType sequenceNumber);
 
   /**
-   * seek to the sequence number immediately following the given sequenceNumber
-   *
-   * @param partition      partition to seek
-   * @param sequenceNumber sequence number to seek
-   */
-  void seekAfter(StreamPartition<PartitionType> partition, SequenceType sequenceNumber);
-
-  /**
    * seek a set of partitions to the earliest record position available in the stream
    *
    * @param partitions partitions to seek
@@ -116,14 +108,15 @@ public interface RecordSupplier<PartitionType, SequenceType> extends Closeable
    */
   SequenceType getEarliestSequenceNumber(StreamPartition<PartitionType> partition) throws TimeoutException;
 
+
   /**
-   * returns the sequence number that the given partition is currently at
+   * returns the sequence number of the next record
    *
    * @param partition target partition
    *
    * @return sequence number
    */
-  SequenceType position(StreamPartition<PartitionType> partition);
+  SequenceType getPosition(StreamPartition<PartitionType> partition);
 
   /**
    * returns the set of partitions under the given stream

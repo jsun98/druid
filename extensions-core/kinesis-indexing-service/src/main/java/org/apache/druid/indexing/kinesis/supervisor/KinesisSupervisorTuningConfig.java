@@ -90,7 +90,8 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
         segmentWriteOutMediumFactory,
         logParseExceptions,
         maxParseExceptions,
-        maxSavedParseExceptions
+        maxSavedParseExceptions,
+        null
     );
 
     this.workerThreads = workerThreads;

@@ -183,6 +183,7 @@ public class KinesisTuningConfigTest
         null,
         null,
         null,
+        null,
         null
     );
     KinesisTuningConfig copy = original.copyOf();
@@ -205,5 +206,6 @@ public class KinesisTuningConfigTest
     Assert.assertEquals(2, (int) copy.getFetchThreads());
     Assert.assertFalse(copy.isSkipSequenceNumberAvailabilityCheck());
     Assert.assertTrue(copy.isResetOffsetAutomatically());
+    Assert.assertEquals(5, copy.getMaxRecordsPerPoll());
   }
 }
