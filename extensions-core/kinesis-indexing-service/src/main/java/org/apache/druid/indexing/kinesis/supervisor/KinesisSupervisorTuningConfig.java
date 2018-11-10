@@ -65,7 +65,9 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
       @JsonProperty("fetchThreads") Integer fetchThreads,
       @JsonProperty("logParseExceptions") @Nullable Boolean logParseExceptions,
       @JsonProperty("maxParseExceptions") @Nullable Integer maxParseExceptions,
-      @JsonProperty("maxSavedParseExceptions") @Nullable Integer maxSavedParseExceptions
+      @JsonProperty("maxSavedParseExceptions") @Nullable Integer maxSavedParseExceptions,
+      @JsonProperty("maxRecordsPerPoll") @Nullable Integer maxRecordsPerPoll,
+      @JsonProperty("intermediateHandoffPeriod") Period intermediateHandoffPeriod
   )
   {
     super(
@@ -91,7 +93,8 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
         logParseExceptions,
         maxParseExceptions,
         maxSavedParseExceptions,
-        null
+        maxRecordsPerPoll,
+        intermediateHandoffPeriod
     );
 
     this.workerThreads = workerThreads;

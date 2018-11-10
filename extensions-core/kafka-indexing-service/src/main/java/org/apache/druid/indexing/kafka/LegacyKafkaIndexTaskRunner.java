@@ -51,6 +51,7 @@ import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
 import org.apache.druid.indexing.seekablestream.common.OrderedSequenceNumber;
 import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
+import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -624,13 +625,15 @@ public class LegacyKafkaIndexTaskRunner extends SeekableStreamIndexTaskRunner<In
   }
 
   @Override
-  protected Long getNextSequenceNumber(Long seq)
+  protected Long getNextSequenceNumber(
+      RecordSupplier<Integer, Long> recordSupplier, StreamPartition<Integer> partition, Long sequenceNumber
+  )
   {
-    return null;
+    return sequenceNumber + 1;
   }
 
   @Override
-  protected List<OrderedPartitionableRecord<Integer, Long>> getRecord(
+  protected List<OrderedPartitionableRecord<Integer, Long>> getRecords(
       RecordSupplier<Integer, Long> recordSupplier, TaskToolbox toolbox
   )
   {

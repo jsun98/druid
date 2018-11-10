@@ -74,7 +74,7 @@ public class KinesisTuningConfigTest
     Assert.assertEquals(10000, config.getRecordBufferSize());
     Assert.assertEquals(5000, config.getRecordBufferOfferTimeout());
     Assert.assertEquals(5000, config.getRecordBufferFullWait());
-    Assert.assertEquals(60000, config.getFetchSequenceNumberTimeout());
+    Assert.assertEquals(10000, config.getFetchSequenceNumberTimeout());
     Assert.assertNull(config.getFetchThreads());
     Assert.assertFalse(config.isSkipSequenceNumberAvailabilityCheck());
     Assert.assertFalse(config.isResetOffsetAutomatically());
@@ -184,6 +184,7 @@ public class KinesisTuningConfigTest
         null,
         null,
         null,
+        null,
         null
     );
     KinesisTuningConfig copy = original.copyOf();
@@ -207,5 +208,6 @@ public class KinesisTuningConfigTest
     Assert.assertFalse(copy.isSkipSequenceNumberAvailabilityCheck());
     Assert.assertTrue(copy.isResetOffsetAutomatically());
     Assert.assertEquals(5, copy.getMaxRecordsPerPoll());
+    Assert.assertEquals(new Period().withDays(Integer.MAX_VALUE), copy.getIntermediateHandoffPeriod());
   }
 }

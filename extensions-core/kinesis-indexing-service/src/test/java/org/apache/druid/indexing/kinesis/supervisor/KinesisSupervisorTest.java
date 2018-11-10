@@ -260,6 +260,8 @@ public class KinesisSupervisorTest extends EasyMockSupport
         null,
         null,
         null,
+        null,
+        null,
         null
     );
 

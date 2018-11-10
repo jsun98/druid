@@ -72,7 +72,8 @@ public class KinesisTuningConfig extends SeekableStreamTuningConfig
       @JsonProperty("logParseExceptions") @Nullable Boolean logParseExceptions,
       @JsonProperty("maxParseExceptions") @Nullable Integer maxParseExceptions,
       @JsonProperty("maxSavedParseExceptions") @Nullable Integer maxSavedParseExceptions,
-      @JsonProperty("maxRecordsPerPoll") @Nullable Integer maxRecordsPerPoll
+      @JsonProperty("maxRecordsPerPoll") @Nullable Integer maxRecordsPerPoll,
+      @JsonProperty("intermediateHandoffPeriod") @Nullable Period intermediateHandoffPeriod
   )
   {
     super(
@@ -90,7 +91,7 @@ public class KinesisTuningConfig extends SeekableStreamTuningConfig
         resetOffsetAutomatically,
         skipSequenceNumberAvailabilityCheck,
         segmentWriteOutMediumFactory,
-        null,
+        intermediateHandoffPeriod,
         logParseExceptions,
         maxParseExceptions,
         maxSavedParseExceptions
@@ -137,7 +138,8 @@ public class KinesisTuningConfig extends SeekableStreamTuningConfig
         isLogParseExceptions(),
         getMaxParseExceptions(),
         getMaxSavedParseExceptions(),
-        getMaxRecordsPerPoll()
+        getMaxRecordsPerPoll(),
+        getIntermediateHandoffPeriod()
     );
   }
 
@@ -203,7 +205,8 @@ public class KinesisTuningConfig extends SeekableStreamTuningConfig
         isLogParseExceptions(),
         getMaxParseExceptions(),
         getMaxSavedParseExceptions(),
-        getMaxRecordsPerPoll()
+        getMaxRecordsPerPoll(),
+        getIntermediateHandoffPeriod()
     );
   }
 

@@ -2248,7 +2248,8 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
           Set<PartitionType> exclusiveStartSequenceNumberPartitions = !useExclusiveStartingSequence
                                                                       ? Collections.emptySet()
                                                                       : startingOffsets
-                                                                          .entrySet().stream()
+                                                                          .entrySet()
+                                                                          .stream()
                                                                           .filter(x -> x.getValue().get() != null
                                                                                        && x.getValue().isExclusive())
                                                                           .map(Entry::getKey)
@@ -2344,7 +2345,7 @@ public abstract class SeekableStreamSupervisor<PartitionType, SequenceType>
       if (!getNotSetMarker().equals(offset)) {
         // if we are given a startingOffset (set by a previous task group which is pending completion) then use it
         if (!OrderedPartitionableRecord.END_OF_SHARD_MARKER.equals(offset)) {
-          builder.put(partition, makeSequenceNumber(offset, true));
+          builder.put(partition, makeSequenceNumber(offset, false));
         }
       } else {
         // if we don't have a startingOffset (first run or we had some previous failures and reset the offsets) then

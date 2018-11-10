@@ -40,7 +40,9 @@ import org.apache.druid.utils.CircularBuffer;
 import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
 import org.apache.kafka.common.TopicPartition;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.validation.constraints.NotNull;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -84,13 +86,16 @@ public class IncrementalPublishingKafkaIndexTaskRunner extends SeekableStreamInd
   }
 
   @Override
-  protected Long getNextSequenceNumber(Long seq)
+  protected Long getNextSequenceNumber(
+      RecordSupplier<Integer, Long> recordSupplier, StreamPartition<Integer> partition, @NotNull Long sequenceNumber
+  )
   {
-    return seq + 1;
+    return sequenceNumber + 1;
   }
 
+  @Nonnull
   @Override
-  protected List<OrderedPartitionableRecord<Integer, Long>> getRecord(
+  protected List<OrderedPartitionableRecord<Integer, Long>> getRecords(
       RecordSupplier<Integer, Long> recordSupplier,
       TaskToolbox toolbox
   ) throws Exception

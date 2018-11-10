@@ -87,6 +87,7 @@ import org.joda.time.DateTime;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
 import javax.servlet.http.HttpServletRequest;
+import javax.validation.constraints.NotNull;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
@@ -753,7 +754,7 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionType, SequenceType>
 
           // calling getReocrd() ensures that excpetions specific to kafka/kinesis like OffsetOutOfRangeException
           // are handled in the subclasses
-          List<OrderedPartitionableRecord<PartitionType, SequenceType>> records = getRecord(recordSupplier, toolbox);
+          List<OrderedPartitionableRecord<PartitionType, SequenceType>> records = getRecords(recordSupplier, toolbox);
 
           stillReading = !assignment.isEmpty();
 
@@ -889,13 +890,16 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionType, SequenceType>
                 handleParseException(e, record);
               }
 
-              currOffsets.put(record.getPartitionId(), getNextSequenceNumber(record.getSequenceNumber()));
-            }
 
+              currOffsets.put(
+                  record.getPartitionId(),
+                  getNextSequenceNumber(
+                      recordSupplier,
+                      record.getStreamPartition(),
+                      currOffsets.get(record.getPartitionId())
+                  )
+              );
 
-            // extra step needed to update endoffsets of Kinesis
-            if (createSequencenNumber(record.getSequenceNumber()).equals(createSequencenNumber(endOffsets.get(record.getPartitionId())))) {
-              currOffsets.put(record.getPartitionId(), record.getSequenceNumber());
             }
 
             if ((currOffsets.get(record.getPartitionId()).equals(endOffsets.get(record.getPartitionId()))
@@ -1017,6 +1021,7 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionType, SequenceType>
       }
 
       appenderator.close();
+      recordSupplier.close();
     }
     catch (InterruptedException | RejectedExecutionException e) {
       // (2) catch InterruptedException and RejectedExecutionException thrown for the whole ingestion steps including
@@ -1064,6 +1069,7 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionType, SequenceType>
     }
     finally {
       try {
+
         if (driver != null) {
           driver.close();
         }
@@ -1087,10 +1093,15 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionType, SequenceType>
     return TaskStatus.success(task.getId());
   }
 
-  // increment by 1 for kafka, does not increment for kinesis (since kinesis seq are not continuous)
-  protected abstract SequenceType getNextSequenceNumber(SequenceType seq);
+  protected abstract SequenceType getNextSequenceNumber(
+      RecordSupplier<PartitionType, SequenceType> recordSupplier,
+      StreamPartition<PartitionType> partition,
+      SequenceType sequenceNumber
+  );
 
-  protected abstract List<OrderedPartitionableRecord<PartitionType, SequenceType>> getRecord(
+
+  @NotNull
+  protected abstract List<OrderedPartitionableRecord<PartitionType, SequenceType>> getRecords(
       RecordSupplier<PartitionType, SequenceType> recordSupplier,
       TaskToolbox toolbox
   ) throws Exception;
