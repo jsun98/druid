@@ -193,6 +193,12 @@ public class BloomDimFilter implements DimFilter
     return extractionFn;
   }
 
+  @JsonProperty
+  public boolean getSkipIndex()
+  {
+    return skipIndex;
+  }
+
   @Override
   public RangeSet<String> getDimensionRangeSet(String dimension)
   {
