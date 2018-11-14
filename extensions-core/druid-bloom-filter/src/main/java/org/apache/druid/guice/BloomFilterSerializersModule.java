@@ -30,6 +30,9 @@ import org.apache.druid.query.aggregation.bloom.BloomFilterAggregatorFactory;
 import org.apache.druid.query.filter.BloomDimFilter;
 import org.apache.druid.query.filter.BloomKFilter;
 import org.apache.druid.query.filter.BloomKFilterHolder;
+import org.apache.druid.query.filter.XxBloomDimFilter;
+import org.apache.druid.query.filter.XxBloomKFilter;
+import org.apache.druid.query.filter.XxBloomKFilterHolder;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -38,6 +41,7 @@ import java.io.IOException;
 public class BloomFilterSerializersModule extends SimpleModule
 {
   public static String BLOOM_FILTER_TYPE_NAME = "bloom";
+  public static String XX_BLOOM_FILTER_TYPE_NAME = "xxbloom";
 
   public BloomFilterSerializersModule()
   {
@@ -48,6 +52,11 @@ public class BloomFilterSerializersModule extends SimpleModule
     addSerializer(BloomKFilter.class, new BloomKFilterSerializer());
     addDeserializer(BloomKFilter.class, new BloomKFilterDeserializer());
     addDeserializer(BloomKFilterHolder.class, new BloomKFilterHolderDeserializer());
+
+    registerSubtypes(new NamedType(XxBloomDimFilter.class, XX_BLOOM_FILTER_TYPE_NAME));
+    addSerializer(XxBloomKFilter.class, new XxBloomKFilterSerializer());
+    addDeserializer(XxBloomKFilter.class, new XxBloomKFilterDeserializer());
+    addDeserializer(XxBloomKFilterHolder.class, new XxBloomKFilterHolderDeserializer());
   }
 
   private static class BloomKFilterSerializer extends StdSerializer<BloomKFilter>
@@ -105,5 +114,63 @@ public class BloomFilterSerializersModule extends SimpleModule
   public static BloomKFilter bloomKFilterFromBytes(byte[] bytes) throws IOException
   {
     return BloomKFilter.deserialize(new ByteArrayInputStream(bytes));
+  }
+
+
+  private static class XxBloomKFilterSerializer extends StdSerializer<XxBloomKFilter>
+  {
+    XxBloomKFilterSerializer()
+    {
+      super(XxBloomKFilter.class);
+    }
+
+    @Override
+    public void serialize(XxBloomKFilter bloomKFilter, JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
+        throws IOException
+    {
+      jsonGenerator.writeBinary(bloomKFilterToBytes(bloomKFilter));
+    }
+  }
+
+  private static class XxBloomKFilterDeserializer extends StdDeserializer<XxBloomKFilter>
+  {
+    XxBloomKFilterDeserializer()
+    {
+      super(XxBloomKFilter.class);
+    }
+
+    @Override
+    public XxBloomKFilter deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+        throws IOException
+    {
+      return xxbloomKFilterFromBytes(jsonParser.getBinaryValue());
+    }
+  }
+
+  private static class XxBloomKFilterHolderDeserializer extends StdDeserializer<XxBloomKFilterHolder>
+  {
+    XxBloomKFilterHolderDeserializer()
+    {
+      super(XxBloomKFilterHolder.class);
+    }
+
+    @Override
+    public XxBloomKFilterHolder deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+        throws IOException
+    {
+      return XxBloomKFilterHolder.fromBytes(jsonParser.getBinaryValue());
+    }
+  }
+
+  public static byte[] xxbloomKFilterToBytes(XxBloomKFilter bloomKFilter) throws IOException
+  {
+    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    BloomKFilter.serialize(byteArrayOutputStream, bloomKFilter);
+    return byteArrayOutputStream.toByteArray();
+  }
+
+  public static XxBloomKFilter xxbloomKFilterFromBytes(byte[] bytes) throws IOException
+  {
+    return XxBloomKFilter.deserialize(new ByteArrayInputStream(bytes));
   }
 }

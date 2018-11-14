@@ -53,6 +53,7 @@ public class DimFilterUtils
   static final byte EXPRESSION_CACHE_ID = 0xE;
   static final byte TRUE_CACHE_ID = 0xF;
   public static byte BLOOM_DIM_FILTER_CACHE_ID = 0x10;
+  public static byte XX_BLOOM_DIM_FILTER_CACHE_ID = 0x11;
   public static final byte STRING_SEPARATOR = (byte) 0xFF;
 
 
