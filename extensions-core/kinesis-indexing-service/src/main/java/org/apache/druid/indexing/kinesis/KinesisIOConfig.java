@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIOConfig;
 import org.apache.druid.indexing.seekablestream.SeekableStreamPartitions;
+import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
 import org.joda.time.DateTime;
 
 import java.util.Set;
@@ -31,8 +32,8 @@ import java.util.Set;
 public class KinesisIOConfig extends SeekableStreamIOConfig<String, String>
 {
   private static final boolean DEFAULT_PAUSE_AFTER_READ = true;
-  private static final int DEFAULT_RECORDS_PER_FETCH = 4000;
-  private static final int DEFAULT_FETCH_DELAY_MILLIS = 0;
+  public static final int DEFAULT_RECORDS_PER_FETCH = 4000;
+  public static final int DEFAULT_FETCH_DELAY_MILLIS = 0;
 
   private final boolean pauseAfterRead;
   private final String endpoint;
@@ -72,8 +73,13 @@ public class KinesisIOConfig extends SeekableStreamIOConfig<String, String>
         endPartitions,
         useTransaction,
         minimumMessageTime,
-        maximumMessageTime
+        maximumMessageTime,
+        true
     );
+    Preconditions.checkArgument(endPartitions.getPartitionSequenceNumberMap()
+                                             .values()
+                                             .stream()
+                                             .noneMatch(x -> x.equals(OrderedPartitionableRecord.END_OF_SHARD_MARKER)));
 
     this.pauseAfterRead = pauseAfterRead != null ? pauseAfterRead : DEFAULT_PAUSE_AFTER_READ;
     this.endpoint = Preconditions.checkNotNull(endpoint, "endpoint");

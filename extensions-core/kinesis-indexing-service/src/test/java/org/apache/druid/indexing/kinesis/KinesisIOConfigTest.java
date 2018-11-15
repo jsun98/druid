@@ -67,15 +67,15 @@ public class KinesisIOConfigTest
     );
 
     Assert.assertEquals("my-sequence-name", config.getBaseSequenceName());
-    Assert.assertEquals("mystream", config.getStartPartitions().getName());
+    Assert.assertEquals("mystream", config.getStartPartitions().getStream());
     Assert.assertEquals(
         ImmutableMap.of("0", "1", "1", "10"),
-        config.getStartPartitions().getMap()
+        config.getStartPartitions().getPartitionSequenceNumberMap()
     );
-    Assert.assertEquals("mystream", config.getEndPartitions().getName());
+    Assert.assertEquals("mystream", config.getEndPartitions().getStream());
     Assert.assertEquals(
         ImmutableMap.of("0", "15", "1", "200"),
-        config.getEndPartitions().getMap()
+        config.getEndPartitions().getPartitionSequenceNumberMap()
     );
     Assert.assertTrue(config.isUseTransaction());
     Assert.assertTrue(config.isPauseAfterRead());
@@ -89,6 +89,7 @@ public class KinesisIOConfigTest
     Assert.assertNull(config.getAwsAssumedRoleArn());
     Assert.assertNull(config.getAwsExternalId());
     Assert.assertFalse(config.isDeaggregate());
+    Assert.assertTrue(config.isSkipOffsetGaps());
   }
 
   @Test
@@ -124,15 +125,15 @@ public class KinesisIOConfigTest
     );
 
     Assert.assertEquals("my-sequence-name", config.getBaseSequenceName());
-    Assert.assertEquals("mystream", config.getStartPartitions().getName());
+    Assert.assertEquals("mystream", config.getStartPartitions().getStream());
     Assert.assertEquals(
         ImmutableMap.of("0", "1", "1", "10"),
-        config.getStartPartitions().getMap()
+        config.getStartPartitions().getPartitionSequenceNumberMap()
     );
-    Assert.assertEquals("mystream", config.getEndPartitions().getName());
+    Assert.assertEquals("mystream", config.getEndPartitions().getStream());
     Assert.assertEquals(
         ImmutableMap.of("0", "15", "1", "200"),
-        config.getEndPartitions().getMap()
+        config.getEndPartitions().getPartitionSequenceNumberMap()
     );
     Assert.assertFalse(config.isUseTransaction());
     Assert.assertFalse(config.isPauseAfterRead());
@@ -149,6 +150,7 @@ public class KinesisIOConfigTest
     Assert.assertEquals("role", config.getAwsAssumedRoleArn());
     Assert.assertEquals("awsexternalid", config.getAwsExternalId());
     Assert.assertTrue(config.isDeaggregate());
+    Assert.assertTrue(config.isSkipOffsetGaps());
   }
 
   @Test

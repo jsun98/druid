@@ -43,9 +43,9 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
 
-public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType> extends IndexTaskClient
+public abstract class SeekableStreamIndexTaskClient<PartitionType, SequenceType> extends IndexTaskClient
 {
-  private static final EmittingLogger log = new EmittingLogger(SeekableStreamIndexTaskClient.class);
+  private final EmittingLogger log = new EmittingLogger(this.getClass());
 
   public SeekableStreamIndexTaskClient(
       HttpClient httpClient,
@@ -102,7 +102,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
   }
 
 
-  public Map<partitionType, sequenceType> pause(final String id)
+  public Map<PartitionType, SequenceType> pause(final String id)
   {
     log.debug("Pause task[%s]", id);
 
@@ -121,7 +121,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
       }
 
       while (true) {
-        if (getStatus(id) == SeekableStreamIndexTask.Status.PAUSED) {
+        if (getStatus(id) == SeekableStreamIndexTaskRunner.Status.PAUSED) {
           return getCurrentOffsets(id, true);
         }
 
@@ -152,16 +152,16 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
     }
   }
 
-  public SeekableStreamIndexTask.Status getStatus(final String id)
+  public SeekableStreamIndexTaskRunner.Status getStatus(final String id)
   {
     log.debug("GetStatus task[%s]", id);
 
     try {
       final FullResponseHolder response = submitRequestWithEmptyContent(id, HttpMethod.GET, "status", null, true);
-      return deserialize(response.getContent(), SeekableStreamIndexTask.Status.class);
+      return deserialize(response.getContent(), SeekableStreamIndexTaskRunner.Status.class);
     }
     catch (NoTaskLocationException e) {
-      return SeekableStreamIndexTask.Status.NOT_STARTED;
+      return SeekableStreamIndexTaskRunner.Status.NOT_STARTED;
     }
     catch (IOException e) {
       throw new RuntimeException(e);
@@ -212,7 +212,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
     }
   }
 
-  public Map<partitionType, sequenceType> getCurrentOffsets(final String id, final boolean retry)
+  public Map<PartitionType, SequenceType> getCurrentOffsets(final String id, final boolean retry)
   {
     log.debug("GetCurrentOffsets task[%s] retry[%s]", id, retry);
 
@@ -234,7 +234,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
     }
   }
 
-  public TreeMap<Integer, Map<partitionType, sequenceType>> getCheckpoints(final String id, final boolean retry)
+  public TreeMap<Integer, Map<PartitionType, SequenceType>> getCheckpoints(final String id, final boolean retry)
   {
     log.debug("GetCheckpoints task[%s] retry[%s]", id, retry);
     try {
@@ -252,7 +252,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
     }
   }
 
-  public ListenableFuture<TreeMap<Integer, Map<partitionType, sequenceType>>> getCheckpointsAsync(
+  public ListenableFuture<TreeMap<Integer, Map<PartitionType, SequenceType>>> getCheckpointsAsync(
       final String id,
       final boolean retry
   )
@@ -260,7 +260,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
     return doAsync(() -> getCheckpoints(id, retry));
   }
 
-  public Map<partitionType, sequenceType> getEndOffsets(final String id)
+  public Map<PartitionType, SequenceType> getEndOffsets(final String id)
   {
     log.debug("GetEndOffsets task[%s]", id);
 
@@ -278,7 +278,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
 
   public boolean setEndOffsets(
       final String id,
-      final Map<partitionType, sequenceType> endOffsets,
+      final Map<PartitionType, SequenceType> endOffsets,
       final boolean finalize
   ) throws IOException
   {
@@ -318,26 +318,26 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
   }
 
 
-  public ListenableFuture<Map<partitionType, sequenceType>> pauseAsync(final String id)
+  public ListenableFuture<Map<PartitionType, SequenceType>> pauseAsync(final String id)
   {
     return doAsync(() -> pause(id));
   }
 
   public ListenableFuture<Boolean> setEndOffsetsAsync(
       final String id,
-      final Map<partitionType, sequenceType> endOffsets,
+      final Map<PartitionType, SequenceType> endOffsets,
       final boolean finalize
   )
   {
     return doAsync(() -> setEndOffsets(id, endOffsets, finalize));
   }
 
-  public ListenableFuture<Map<partitionType, sequenceType>> getCurrentOffsetsAsync(final String id, final boolean retry)
+  public ListenableFuture<Map<PartitionType, SequenceType>> getCurrentOffsetsAsync(final String id, final boolean retry)
   {
     return doAsync(() -> getCurrentOffsets(id, retry));
   }
 
-  public ListenableFuture<Map<partitionType, sequenceType>> getEndOffsetsAsync(final String id)
+  public ListenableFuture<Map<PartitionType, SequenceType>> getEndOffsetsAsync(final String id)
   {
     return doAsync(() -> getEndOffsets(id));
   }
@@ -349,7 +349,7 @@ public abstract class SeekableStreamIndexTaskClient<partitionType, sequenceType>
   }
 
 
-  public ListenableFuture<SeekableStreamIndexTask.Status> getStatusAsync(final String id)
+  public ListenableFuture<SeekableStreamIndexTaskRunner.Status> getStatusAsync(final String id)
   {
     return doAsync(() -> getStatus(id));
   }

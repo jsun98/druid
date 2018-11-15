@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import org.apache.druid.indexing.common.stats.RowIngestionMetersFactory;
 import org.apache.druid.indexing.common.task.Task;
@@ -58,8 +57,6 @@ import org.apache.druid.java.util.emitter.service.ServiceMetricEvent;
 import org.apache.druid.server.metrics.DruidMonitorSchedulerConfig;
 import org.joda.time.DateTime;
 
-import javax.annotation.Nullable;
-import javax.validation.constraints.NotNull;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +84,7 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   private static final long INITIAL_GET_OFFSET_DELAY_MILLIS = 15000;
   private static final long INITIAL_EMIT_LAG_METRIC_DELAY_MILLIS = 25000;
   private static final Long NOT_SET = -1L;
+  private static final Long END_OF_PARTITION = Long.MAX_VALUE;
 
   private final ServiceEmitter emitter;
   private final DruidMonitorSchedulerConfig monitorSchedulerConfig;
@@ -113,47 +111,13 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        NOT_SET,
-        Long.MAX_VALUE,
-        false,
-        true
+        false
     );
 
     this.spec = spec;
     this.emitter = spec.getEmitter();
     this.monitorSchedulerConfig = spec.getMonitorSchedulerConfig();
 
-  }
-
-
-  @Override
-  public void checkpoint(
-      @Nullable Integer taskGroupId,
-      @Deprecated String baseSequenceName,
-      DataSourceMetadata previousCheckPoint,
-      DataSourceMetadata currentCheckPoint
-  )
-  {
-    Preconditions.checkNotNull(previousCheckPoint, "previousCheckpoint");
-    Preconditions.checkNotNull(currentCheckPoint, "current checkpoint cannot be null");
-    Preconditions.checkArgument(
-        spec.getIoConfig()
-            .getTopic()
-            .equals(((KafkaDataSourceMetadata) currentCheckPoint).getKafkaPartitions().getTopic()),
-        "Supervisor topic [%s] and topic in checkpoint [%s] does not match",
-        spec.getIoConfig().getTopic(),
-        ((KafkaDataSourceMetadata) currentCheckPoint).getKafkaPartitions().getTopic()
-    );
-
-    log.info("Checkpointing [%s] for taskGroup [%s]", currentCheckPoint, taskGroupId);
-    addNotice(
-        new CheckpointNotice(
-            taskGroupId,
-            baseSequenceName,
-            (KafkaDataSourceMetadata) previousCheckPoint,
-            (KafkaDataSourceMetadata) currentCheckPoint
-        )
-    );
   }
 
 
@@ -199,7 +163,7 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   }
 
   @Override
-  protected boolean checkTaskInstance(Task task)
+  protected boolean doesTaskTypeMatchSupervisor(Task task)
   {
     return task instanceof KafkaIndexTask;
   }
@@ -329,7 +293,6 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   @Override
   protected OrderedSequenceNumber<Long> makeSequenceNumber(
       Long seq,
-      boolean useExclusive,
       boolean isExclusive
   )
   {
@@ -373,14 +336,15 @@ public class KafkaSupervisor extends SeekableStreamSupervisor<Integer, Long>
   }
 
   @Override
-  protected boolean checkSequenceAvailability(
-      @NotNull Integer partition,
-      @NotNull Long sequenceFromMetadata
-  ) throws TimeoutException
+  protected Long getNotSetMarker()
   {
-    Long latestOffset = getOffsetFromStreamForPartition(partition, false);
-    return latestOffset != null
-           && KafkaSequenceNumber.of(latestOffset).compareTo(KafkaSequenceNumber.of(sequenceFromMetadata)) >= 0;
+    return NOT_SET;
+  }
+
+  @Override
+  protected Long getEndOfPartitionMarker()
+  {
+    return END_OF_PARTITION;
   }
 
   // the following are for unit testing purposes only

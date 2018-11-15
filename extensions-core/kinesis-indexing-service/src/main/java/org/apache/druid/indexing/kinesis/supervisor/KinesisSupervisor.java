@@ -52,8 +52,6 @@ import org.apache.druid.indexing.seekablestream.supervisor.SeekableStreamSupervi
 import org.apache.druid.java.util.common.StringUtils;
 import org.joda.time.DateTime;
 
-import javax.annotation.Nullable;
-import javax.validation.constraints.NotNull;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -65,8 +63,8 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * Supervisor responsible for managing the KinesisIndexTask for a single dataSource. At a high level, the class accepts a
- * {@link KinesisSupervisorSpec} which includes the Kafka topic and configuration as well as an ingestion spec which will
- * be used to generate the indexing tasks. The run loop periodically refreshes its view of the Kafka topic's partitions
+ * {@link KinesisSupervisorSpec} which includes the Kinesis stream and configuration as well as an ingestion spec which will
+ * be used to generate the indexing tasks. The run loop periodically refreshes its view of the Kinesis stream's partitions
  * and the list of running indexing tasks and ensures that all partitions are being read from and that there are enough
  * tasks to satisfy the desired number of replicas. As tasks complete, new tasks are queued to process the next range of
  * Kinesis sequences.
@@ -97,26 +95,10 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
         mapper,
         spec,
         rowIngestionMetersFactory,
-        NOT_SET,
-        SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER,
-        true,
-        false
+        true
     );
 
     this.spec = spec;
-  }
-
-
-  @Override
-  public void checkpoint(
-      @Nullable Integer taskGroupId,
-      @Deprecated String baseSequenceName,
-      DataSourceMetadata previousCheckPoint,
-      DataSourceMetadata currentCheckPoint
-  )
-  {
-    // not supported right now
-    throw new UnsupportedOperationException("kinesis supervisor does not yet support checkpoints");
   }
 
   @Override
@@ -199,7 +181,8 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
         taskTuningConfig.getRecordBufferSize(),
         taskTuningConfig.getRecordBufferOfferTimeout(),
         taskTuningConfig.getRecordBufferFullWait(),
-        taskTuningConfig.getFetchSequenceNumberTimeout()
+        taskTuningConfig.getFetchSequenceNumberTimeout(),
+        taskTuningConfig.getMaxRecordsPerPoll()
     );
   }
 
@@ -235,7 +218,7 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
   }
 
   @Override
-  protected boolean checkTaskInstance(Task task)
+  protected boolean doesTaskTypeMatchSupervisor(Task task)
   {
     return task instanceof KinesisIndexTask;
   }
@@ -278,11 +261,10 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
   @Override
   protected OrderedSequenceNumber<String> makeSequenceNumber(
       String seq,
-      boolean useExclusive,
       boolean isExclusive
   )
   {
-    return KinesisSequenceNumber.of(seq, useExclusive, isExclusive);
+    return KinesisSequenceNumber.of(seq, isExclusive);
   }
 
   // the following are for unit testing purposes only
@@ -330,12 +312,15 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
   }
 
   @Override
-  protected boolean checkSequenceAvailability(@NotNull String partition, @NotNull String sequenceFromMetadata)
-      throws TimeoutException
+  protected String getNotSetMarker()
   {
-    String earliestSequence = super.getOffsetFromStreamForPartition(partition, true);
-    return earliestSequence != null
-           && KinesisSequenceNumber.of(earliestSequence).compareTo(KinesisSequenceNumber.of(sequenceFromMetadata)) <= 0;
+    return NOT_SET;
+  }
+
+  @Override
+  protected String getEndOfPartitionMarker()
+  {
+    return SeekableStreamPartitions.NO_END_SEQUENCE_NUMBER;
   }
 
   @Override
@@ -391,19 +376,19 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
       {
         try {
           final Map<String, List<PartitionInfo>> topics = lagComputingConsumer.listTopics();
-          final List<PartitionInfo> partitionInfoList = topics.get(ioConfig.getName());
+          final List<PartitionInfo> partitionInfoList = topics.get(ioConfig.getStream());
           lagComputingConsumer.assign(
               Lists.transform(partitionInfoList, new Function<PartitionInfo, TopicPartition>()
               {
                 @Override
                 public TopicPartition apply(PartitionInfo input)
                 {
-                  return new TopicPartition(ioConfig.getName(), input.partition());
+                  return new TopicPartition(ioConfig.getStream(), input.partition());
                 }
               })
           );
           final Map<Integer, Long> offsetsResponse = new ConcurrentHashMap<>();
-          final List<ListenableFuture<Void>> futures = Lists.newArrayList();
+          final List<ListenableFuture<Void>> futures = new ArrayList<>();
           for (TaskGroup taskGroup : taskGroups.values()) {
             for (String taskId : taskGroup.taskIds()) {
               futures.add(Futures.transform(
@@ -448,7 +433,7 @@ public class KinesisSupervisor extends SeekableStreamSupervisor<String, String>
           long lag = 0;
           for (PartitionInfo partitionInfo : partitionInfoList) {
             long diff;
-            final TopicPartition topicPartition = new TopicPartition(ioConfig.getName(), partitionInfo.partition());
+            final TopicPartition topicPartition = new TopicPartition(ioConfig.getStream(), partitionInfo.partition());
             lagComputingConsumer.seekToEnd(ImmutableList.of(topicPartition));
             if (offsetsResponse.get(topicPartition.partition()) != null) {
               diff = lagComputingConsumer.position(topicPartition) - offsetsResponse.get(topicPartition.partition());

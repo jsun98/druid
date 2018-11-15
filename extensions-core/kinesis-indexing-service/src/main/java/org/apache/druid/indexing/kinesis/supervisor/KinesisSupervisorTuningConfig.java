@@ -42,6 +42,7 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
       @JsonProperty("maxRowsInMemory") Integer maxRowsInMemory,
       @JsonProperty("maxBytesInMemory") Long maxBytesInMemory,
       @JsonProperty("maxRowsPerSegment") Integer maxRowsPerSegment,
+      @JsonProperty("maxTotalRows") Long maxTotalRows,
       @JsonProperty("intermediatePersistPeriod") Period intermediatePersistPeriod,
       @JsonProperty("basePersistDirectory") File basePersistDirectory,
       @JsonProperty("maxPendingPersists") Integer maxPendingPersists,
@@ -64,13 +65,16 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
       @JsonProperty("fetchThreads") Integer fetchThreads,
       @JsonProperty("logParseExceptions") @Nullable Boolean logParseExceptions,
       @JsonProperty("maxParseExceptions") @Nullable Integer maxParseExceptions,
-      @JsonProperty("maxSavedParseExceptions") @Nullable Integer maxSavedParseExceptions
+      @JsonProperty("maxSavedParseExceptions") @Nullable Integer maxSavedParseExceptions,
+      @JsonProperty("maxRecordsPerPoll") @Nullable Integer maxRecordsPerPoll,
+      @JsonProperty("intermediateHandoffPeriod") Period intermediateHandoffPeriod
   )
   {
     super(
         maxRowsInMemory,
         maxBytesInMemory,
         maxRowsPerSegment,
+        maxTotalRows,
         intermediatePersistPeriod,
         basePersistDirectory,
         maxPendingPersists,
@@ -88,14 +92,19 @@ public class KinesisSupervisorTuningConfig extends KinesisTuningConfig implement
         segmentWriteOutMediumFactory,
         logParseExceptions,
         maxParseExceptions,
-        maxSavedParseExceptions
+        maxSavedParseExceptions,
+        maxRecordsPerPoll,
+        intermediateHandoffPeriod
     );
 
     this.workerThreads = workerThreads;
     this.chatThreads = chatThreads;
-    this.chatRetries = (chatRetries != null ? chatRetries : 8);
-    this.httpTimeout = SeekableStreamSupervisorTuningConfig.defaultDuration(httpTimeout, "PT10S");
-    this.shutdownTimeout = SeekableStreamSupervisorTuningConfig.defaultDuration(shutdownTimeout, "PT80S");
+    this.chatRetries = (chatRetries != null ? chatRetries : DEFAULT_CHAT_RETRIES);
+    this.httpTimeout = SeekableStreamSupervisorTuningConfig.defaultDuration(httpTimeout, DEFAULT_HTTP_TIMEOUT);
+    this.shutdownTimeout = SeekableStreamSupervisorTuningConfig.defaultDuration(
+        shutdownTimeout,
+        DEFAULT_SHUTDOWN_TIMEOUT
+    );
   }
 
   @Override

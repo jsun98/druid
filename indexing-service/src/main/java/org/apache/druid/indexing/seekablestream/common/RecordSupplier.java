@@ -22,22 +22,30 @@ package org.apache.druid.indexing.seekablestream.common;
 import com.google.common.annotations.Beta;
 
 import javax.annotation.Nullable;
+import javax.validation.constraints.NotNull;
 import java.io.Closeable;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeoutException;
 
 /**
  * The RecordSupplier interface is a wrapper for the incoming seekable data stream
  * (i.e. Kafka consumer, Kinesis streams)
  *
- * @param <partitionType> Partition Number Type
- * @param <sequenceType> Sequence Number Type
+ * @param <PartitionType> Partition Number Type
+ * @param <SequenceType>  Sequence Number Type
  */
 @Beta
-public interface RecordSupplier<partitionType, sequenceType> extends Closeable
+public interface RecordSupplier<PartitionType, SequenceType> extends Closeable
 {
-  void assign(Set<StreamPartition<partitionType>> partitions);
+  /**
+   * assigns the given parittions to this RecordSupplier
+   * and seek to the earliest sequence number. Previously
+   * assigned partitions will be replaced.
+   *
+   * @param partitions parititions to assign
+   */
+  void assign(Set<StreamPartition<PartitionType>> partitions);
 
   /**
    * seek to specified sequence number within a specific partition
@@ -45,36 +53,28 @@ public interface RecordSupplier<partitionType, sequenceType> extends Closeable
    * @param partition      partition to seek
    * @param sequenceNumber sequence number to seek to
    */
-  void seek(StreamPartition<partitionType> partition, sequenceType sequenceNumber);
-
-  /**
-   * seek to the sequence number immediately following the given sequenceNumber
-   *
-   * @param partition      partition to seek
-   * @param sequenceNumber sequence number to seek
-   */
-  void seekAfter(StreamPartition<partitionType> partition, sequenceType sequenceNumber);
+  void seek(StreamPartition<PartitionType> partition, SequenceType sequenceNumber);
 
   /**
    * seek a set of partitions to the earliest record position available in the stream
    *
    * @param partitions partitions to seek
    */
-  void seekToEarliest(Set<StreamPartition<partitionType>> partitions);
+  void seekToEarliest(Set<StreamPartition<PartitionType>> partitions);
 
   /**
    * seek a set of partitions to the latest/newest record position available in the stream
    *
    * @param partitions partitions to seek
    */
-  void seekToLatest(Set<StreamPartition<partitionType>> partitions);
+  void seekToLatest(Set<StreamPartition<PartitionType>> partitions);
 
   /**
    * get the current assignment
    *
    * @return set of assignments
    */
-  Collection<StreamPartition<partitionType>> getAssignment();
+  Collection<StreamPartition<PartitionType>> getAssignment();
 
   /**
    * poll the record at the current seeked to sequence in stream
@@ -83,8 +83,8 @@ public interface RecordSupplier<partitionType, sequenceType> extends Closeable
    *
    * @return record
    */
-  @Nullable
-  OrderedPartitionableRecord<partitionType, sequenceType> poll(long timeout);
+  @NotNull
+  List<OrderedPartitionableRecord<PartitionType, SequenceType>> poll(long timeout);
 
   /**
    * get the latest sequence number in stream
@@ -92,10 +92,9 @@ public interface RecordSupplier<partitionType, sequenceType> extends Closeable
    * @param partition target partition
    *
    * @return latest sequence number
-   *
-   * @throws TimeoutException TimeoutException
    */
-  sequenceType getLatestSequenceNumber(StreamPartition<partitionType> partition) throws TimeoutException;
+  @Nullable
+  SequenceType getLatestSequenceNumber(StreamPartition<PartitionType> partition);
 
   /**
    * get the earliest sequence number in stream
@@ -103,19 +102,19 @@ public interface RecordSupplier<partitionType, sequenceType> extends Closeable
    * @param partition target partition
    *
    * @return earliest sequence number
-   *
-   * @throws TimeoutException TimeoutException
    */
-  sequenceType getEarliestSequenceNumber(StreamPartition<partitionType> partition) throws TimeoutException;
+  @Nullable
+  SequenceType getEarliestSequenceNumber(StreamPartition<PartitionType> partition);
+
 
   /**
-   * returns the sequence number that the given partition is currently at
+   * returns the sequence number of the next record
    *
    * @param partition target partition
    *
    * @return sequence number
    */
-  sequenceType position(StreamPartition<partitionType> partition);
+  SequenceType getPosition(StreamPartition<PartitionType> partition);
 
   /**
    * returns the set of partitions under the given stream
@@ -124,7 +123,7 @@ public interface RecordSupplier<partitionType, sequenceType> extends Closeable
    *
    * @return set of partitions
    */
-  Set<partitionType> getPartitionIds(String stream);
+  Set<PartitionType> getPartitionIds(String stream);
 
   /**
    * close the RecordSupplier

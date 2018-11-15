@@ -21,41 +21,38 @@ package org.apache.druid.indexing.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
+import org.apache.druid.indexing.kafka.supervisor.KafkaSupervisorIOConfig;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
 import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
-import org.apache.druid.java.util.emitter.EmittingLogger;
+import org.apache.druid.metadata.PasswordProvider;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 
+import javax.annotation.Nonnull;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
 {
-  private static final EmittingLogger log = new EmittingLogger(KafkaRecordSupplier.class);
   private static final Random RANDOM = ThreadLocalRandom.current();
 
   private final KafkaConsumer<byte[], byte[]> consumer;
   private final Map<String, Object> consumerProperties;
   private final ObjectMapper sortingMapper;
   private boolean closed;
-  private final BlockingQueue<OrderedPartitionableRecord<Integer, Long>> records;
-
 
   public KafkaRecordSupplier(
       Map<String, Object> consumerProperties,
@@ -65,8 +62,6 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
     this.consumerProperties = consumerProperties;
     this.sortingMapper = sortingMapper;
     this.consumer = getKafkaConsumer();
-    this.closed = false;
-    this.records = new LinkedBlockingQueue<>();
   }
 
   @Override
@@ -76,18 +71,13 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
                         .stream()
                         .map(x -> new TopicPartition(x.getStream(), x.getPartitionId()))
                         .collect(Collectors.toSet()));
+    seekToEarliest(streamPartitions);
   }
 
   @Override
   public void seek(StreamPartition<Integer> partition, Long sequenceNumber)
   {
     consumer.seek(new TopicPartition(partition.getStream(), partition.getPartitionId()), sequenceNumber);
-  }
-
-  @Override
-  public void seekAfter(StreamPartition<Integer> partition, Long sequenceNumber)
-  {
-    seek(partition, sequenceNumber + 1);
   }
 
   @Override
@@ -114,42 +104,48 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
     Set<TopicPartition> topicPartitions = consumer.assignment();
     return topicPartitions
         .stream()
-        .map((TopicPartition e) -> new StreamPartition<>(e.topic(), e.partition()))
+        .map(e -> new StreamPartition<>(e.topic(), e.partition()))
         .collect(Collectors.toSet());
   }
 
+  @Nonnull
   @Override
-  public OrderedPartitionableRecord<Integer, Long> poll(long timeout)
+  public List<OrderedPartitionableRecord<Integer, Long>> poll(long timeout)
   {
-    ConsumerRecords<byte[], byte[]> polledRecords = consumer.poll(timeout);
-    if (!polledRecords.isEmpty()) {
-      ConsumerRecord<byte[], byte[]> record = polledRecords.iterator().next();
-      return new OrderedPartitionableRecord<>(
+    List<OrderedPartitionableRecord<Integer, Long>> polledRecords = new ArrayList<>();
+    for (ConsumerRecord<byte[], byte[]> record : consumer.poll(timeout)) {
+      polledRecords.add(new OrderedPartitionableRecord<>(
           record.topic(),
           record.partition(),
           record.offset(),
           record.value() == null ? null : ImmutableList.of(record.value())
-      );
+      ));
     }
-    return null;
+    return polledRecords;
   }
 
   @Override
   public Long getLatestSequenceNumber(StreamPartition<Integer> partition)
   {
+    Long currPos = consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
     seekToLatest(Collections.singleton(partition));
-    return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    Long nextPos = consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    seek(partition, currPos);
+    return nextPos;
   }
 
   @Override
   public Long getEarliestSequenceNumber(StreamPartition<Integer> partition)
   {
+    Long currPos = consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
     seekToEarliest(Collections.singleton(partition));
-    return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    Long nextPos = consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
+    seek(partition, currPos);
+    return nextPos;
   }
 
   @Override
-  public Long position(StreamPartition<Integer> partition)
+  public Long getPosition(StreamPartition<Integer> partition)
   {
     return consumer.position(new TopicPartition(partition.getStream(), partition.getPartitionId()));
   }
@@ -174,15 +170,37 @@ public class KafkaRecordSupplier implements RecordSupplier<Integer, Long>
     consumer.close();
   }
 
+  public static void addConsumerPropertiesFromConfig(
+      Properties properties,
+      ObjectMapper configMapper,
+      Map<String, Object> consumerProperties
+  )
+  {
+    // Extract passwords before SSL connection to Kafka
+    for (Map.Entry<String, Object> entry : consumerProperties.entrySet()) {
+      String propertyKey = entry.getKey();
+      if (propertyKey.equals(KafkaSupervisorIOConfig.TRUST_STORE_PASSWORD_KEY)
+          || propertyKey.equals(KafkaSupervisorIOConfig.KEY_STORE_PASSWORD_KEY)
+          || propertyKey.equals(KafkaSupervisorIOConfig.KEY_PASSWORD_KEY)) {
+        PasswordProvider configPasswordProvider = configMapper.convertValue(
+            entry.getValue(),
+            PasswordProvider.class
+        );
+        properties.setProperty(propertyKey, configPasswordProvider.getPassword());
+      } else {
+        properties.setProperty(propertyKey, String.valueOf(entry.getValue()));
+      }
+    }
+  }
+
   private KafkaConsumer<byte[], byte[]> getKafkaConsumer()
   {
     final Properties props = new Properties();
 
     props.setProperty("metadata.max.age.ms", "10000");
     props.setProperty("group.id", StringUtils.format("kafka-supervisor-%s", getRandomId()));
-    props.setProperty("max.poll.records", "1");
 
-    KafkaIndexTask.addConsumerPropertiesFromConfig(props, sortingMapper, consumerProperties);
+    addConsumerPropertiesFromConfig(props, sortingMapper, consumerProperties);
 
     props.setProperty("enable.auto.commit", "false");
 
