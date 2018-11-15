@@ -35,6 +35,7 @@ public class QueryContexts
   public static final String MAX_SCATTER_GATHER_BYTES_KEY = "maxScatterGatherBytes";
   public static final String MAX_QUEUED_BYTES_KEY = "maxQueuedBytes";
   public static final String DEFAULT_TIMEOUT_KEY = "defaultTimeout";
+  @Deprecated
   public static final String CHUNK_PERIOD_KEY = "chunkPeriod";
   public static final String NUM_BROKER_PARALLEL_COMBINE_THREADS = "numBrokerParallelCombineThreads";
   public static final String BROKER_PARALLEL_COMBINE_QUEUE_SIZE = "brokerParallelCombineQueueSize";
@@ -137,6 +138,7 @@ public class QueryContexts
     return parseInt(query, PRIORITY_KEY, defaultValue);
   }
 
+  @Deprecated
   public static <T> String getChunkPeriod(Query<T> query)
   {
     return query.getContextValue(CHUNK_PERIOD_KEY, "P0D");

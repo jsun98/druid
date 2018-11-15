@@ -340,7 +340,7 @@ public class GroupByStrategyV2 implements GroupByStrategy
   {
     // This contains all closeable objects which are closed when the returned iterator iterates all the elements,
     // or an exceptions is thrown. The objects are closed in their reverse order.
-    final List<Closeable> closeOnExit = Lists.newArrayList();
+    final List<Closeable> closeOnExit = new ArrayList<>();
 
     try {
       Supplier<Grouper> grouperSupplier = Suppliers.memoize(
@@ -389,7 +389,7 @@ public class GroupByStrategyV2 implements GroupByStrategy
   {
     // This contains all closeable objects which are closed when the returned iterator iterates all the elements,
     // or an exceptions is thrown. The objects are closed in their reverse order.
-    final List<Closeable> closeOnExit = Lists.newArrayList();
+    final List<Closeable> closeOnExit = new ArrayList<>();
 
     try {
       GroupByQuery queryWithoutSubtotalsSpec = query.withSubtotalsSpec(null);

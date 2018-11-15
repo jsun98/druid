@@ -21,7 +21,6 @@ package org.apache.druid.sql.calcite.planner;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Maps;
 import com.google.inject.Inject;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
@@ -57,6 +56,7 @@ import org.apache.druid.sql.calcite.expression.builtin.ExtractOperatorConversion
 import org.apache.druid.sql.calcite.expression.builtin.FloorOperatorConversion;
 import org.apache.druid.sql.calcite.expression.builtin.LTrimOperatorConversion;
 import org.apache.druid.sql.calcite.expression.builtin.MillisToTimestampOperatorConversion;
+import org.apache.druid.sql.calcite.expression.builtin.PositionOperatorConversion;
 import org.apache.druid.sql.calcite.expression.builtin.RTrimOperatorConversion;
 import org.apache.druid.sql.calcite.expression.builtin.RegexpExtractOperatorConversion;
 import org.apache.druid.sql.calcite.expression.builtin.ReinterpretOperatorConversion;
@@ -76,6 +76,7 @@ import org.apache.druid.sql.calcite.expression.builtin.LikeOperatorConversion;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -150,6 +151,7 @@ public class DruidOperatorTable implements SqlOperatorTable
           .add(new MillisToTimestampOperatorConversion())
           .add(new ReinterpretOperatorConversion())
           .add(new RegexpExtractOperatorConversion())
+          .add(new PositionOperatorConversion())
           .add(new StrposOperatorConversion())
           .add(new SubstringOperatorConversion())
           .add(new ConcatOperatorConversion())
@@ -188,8 +190,8 @@ public class DruidOperatorTable implements SqlOperatorTable
       final Set<SqlOperatorConversion> operatorConversions
   )
   {
-    this.aggregators = Maps.newHashMap();
-    this.operatorConversions = Maps.newHashMap();
+    this.aggregators = new HashMap<>();
+    this.operatorConversions = new HashMap<>();
 
     for (SqlAggregator aggregator : aggregators) {
       final OperatorKey operatorKey = OperatorKey.of(aggregator.calciteFunction());
